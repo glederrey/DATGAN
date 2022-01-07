@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorpack.utils import logger
 
 from datgan.utils.data import Preprocessor
+from datgan.utils.dag import verify_dag, get_order_variables
 
 
 class DATGAN:
@@ -188,6 +189,7 @@ class DATGAN:
             if not os.path.exists(preprocessed_data_path):
                 os.makedirs(preprocessed_data_path)
 
+            # Preprocess the original data
             self.preprocessor = Preprocessor(continuous_columns=continuous_columns)
             self.transformed_data = self.preprocessor.fit_transform(data)
 
@@ -202,15 +204,30 @@ class DATGAN:
 
             logger.info("Preprocessed data have been saved in '{}'".format(preprocessed_data_path))
 
-    def fit(self, df, continuous_columns):
+    def fit(self, data, dag, continuous_columns, preprocessed_data_path=None):
         """
+        Fit the DATGAN model to the original data and save it once it's finished training.
 
         Parameters
         ----------
+            data: pandas.DataFrame
+                Original dataset
+            dag: networkx.DiGraph
+                Directed Acyclic Graph representing the relations between the variables
             continuous_columns: list[str]
-                List of variables to be considered continuous.
-
+                List of the names of the continuous columns
+            preprocessed_data_path: str, default None
+                Path to an existing preprocessor. If None is given, the model will preprocess the data and save it under
+                self.output + '/encoded_data'.
         """
+
+        # Preprocess the original data
+        self.preprocess(data, continuous_columns, preprocessed_data_path)
+
+        # Verify the integrity of the DAG and get the ordered list of variables for the Generator
+        self.dag = dag
+        verify_dag(data, dag)
+        self.var_order = get_order_variables(dag)
 
 
         print('TEST')

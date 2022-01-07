@@ -1,6 +1,10 @@
-"""Data preprocessing related functionalities.
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-This modules contains the tools to preprare the data, from the raw csv files, to the DataFlow objects that are used to
+"""
+Data preprocessing related functionalities.
+
+This file contains the tools to preprare the data, from the raw csv files, to the DataFlow objects that are used to
 fit the DATGAN model.
 
 This file contains the following classes:
