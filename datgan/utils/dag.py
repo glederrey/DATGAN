@@ -66,7 +66,6 @@ def get_in_edges(dag):
     -------
         in_edges: dct
             Dictionary of in-edges for each node in the DAG
-
     """
     # Get the in_edges
     in_edges = {}
@@ -93,6 +92,8 @@ def get_order_variables(dag):
     -------
         treated: list[str]
             Ordered list of the variable names
+        n_sources: int
+            Number of sources in the DAG
     """
 
     # Get the in_edges
@@ -103,6 +104,8 @@ def get_order_variables(dag):
 
     # Get all nodes with 0 in degree
     to_treat = [node for node, in_degree in dag.in_degree() if in_degree == 0]
+
+    n_sources = len(to_treat)
 
     while len(untreated) > 0:
         # remove the treated nodes
@@ -122,4 +125,4 @@ def get_order_variables(dag):
             if edge[0] in treated and all_treated and edge[1] not in treated and edge[1] not in to_treat:
                 to_treat.append(edge[1])
 
-    return treated
+    return treated, n_sources

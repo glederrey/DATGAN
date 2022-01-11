@@ -50,6 +50,7 @@ class Preprocessor:
             continuous_columns = []
 
         self.continuous_columns = continuous_columns
+        self.columns = None
 
         self.metadata = None
         self.continuous_transformer = MultiModalNumberTransformer()
@@ -92,7 +93,9 @@ class Preprocessor:
         transformed_data = {}
         details = {}
 
-        for col in data.columns:
+        self.columns = data.columns
+
+        for col in self.columns:
             if col in self.continuous_columns:
                 logger.info("Encoding continuous variable \"{}\"...".format(col))
 
@@ -385,7 +388,7 @@ class DATGANDataFlow(RNGDataFlow):
             Prepared data from `filename`.
     """
 
-    def __init__(self, data, metadata, shuffle=True):
+    def __init__(self, data, metadata, var_order, shuffle=True):
         """
         Initialize object.
 
@@ -395,6 +398,8 @@ class DATGANDataFlow(RNGDataFlow):
                 Path to the json file containing the metadata.
             metadata: dict
                 Description of the inputs.
+            var_order: list[str]
+                Ordered list of the variables
             shuffle: bool, default True
                 Whether or not to shuffle the data.
 
@@ -413,7 +418,7 @@ class DATGANDataFlow(RNGDataFlow):
 
         self.data = []
 
-        for col in self.metadata['details'].keys():
+        for col in var_order:
             column_info = self.metadata['details'][col]
             if column_info['type'] == 'continuous':
                 col_data = data[col]

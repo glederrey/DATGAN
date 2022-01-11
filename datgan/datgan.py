@@ -13,27 +13,32 @@ from tensorpack.utils import logger
 from tensorpack import BatchData, QueueInput, SaverRestore, ModelSaver, PredictConfig, SimpleDatasetPredictor
 
 from datgan.utils.utils import ClipCallback
-from datgan.utils.data import Preprocessor, DATGANDataFlow, RandomZData
 from datgan.utils.dag import verify_dag, get_order_variables
+from datgan.synthesizer.DATGANSynthesizer import DATGANSynthesizer
 from datgan.utils.trainer import GANTrainerClipping, SeparateGANTrainer
+from datgan.utils.data import Preprocessor, DATGANDataFlow, RandomZData
 
 
 class DATGAN:
     """
     Main class for DATGAN synthesizer.
 
-    Attributes
-    ----------
-        continuous_columns:  list[str]
-            List of variables to be considered continuous.
-
     Methods
     -------
-        preprocessing
+        preprocessing:
+            Preprocess the original data
 
-        fit
+        fit:
+            Fit the DATGAN model to the encoded data
 
-        sample
+        sample:
+            Sample the synthetic data from the trained DATGAN model
+
+        save:
+            Save the model to load it later.
+
+        load:
+            Load the model.
 
     """
 
@@ -64,6 +69,8 @@ class DATGAN:
                 Whether or not to store checkpoints of the model after each training epoch.
             restore_session: bool, default True
                 Whether or not continue training from the last checkpoint.
+            learning_rate: float, default None
+                Learning rate. If set to None, the value will be set according to the chosen loss function.
             z_dim: int, default 200
                 Dimension of the noise vector used as an input to the generator.
             num_gen_rnn: int, default 100
@@ -90,17 +97,12 @@ class DATGAN:
 
         self.output = output
 
-        # Make sure this directory exists
+        # Some paths and directories
         self.log_dir = os.path.join(self.output, 'logs')
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
-
-        # Make sure this directory exists
         self.model_dir = os.path.join(self.output, 'model')
-        if not os.path.exists(self.model_dir):
-            os.makedirs(self.model_dir)
-
         self.restore_path = os.path.join(self.model_dir, 'checkpoint')
+
+        self.data_dir = None
 
         # Training parameters
         self.max_epoch = max_epoch
@@ -185,9 +187,11 @@ class DATGAN:
         if not os.path.exists(preprocessed_data_path):
             os.makedirs(preprocessed_data_path)
 
+        self.data_dir = preprocessed_data_path
+
         # Load the existing preprocessor
-        if os.path.exists(os.path.join(preprocessed_data_path, 'preprocessed_data.pkl')) and \
-                os.path.exists(os.path.join(preprocessed_data_path, 'preprocessor.pkl')):
+        if os.path.exists(os.path.join(self.data_dir, 'preprocessed_data.pkl')) and \
+                os.path.exists(os.path.join(self.data_dir, 'preprocessor.pkl')):
 
             # Load the preprocessor and the preprocessed data
             with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'rb') as f:
@@ -199,24 +203,20 @@ class DATGAN:
         else:
             logger.info("Preprocessing the data!")
 
-            preprocessed_data_path = os.path.join(self.output, 'encoded_data')
-            if not os.path.exists(preprocessed_data_path):
-                os.makedirs(preprocessed_data_path)
-
             # Preprocess the original data
             self.preprocessor = Preprocessor(continuous_columns=continuous_columns)
             self.transformed_data = self.preprocessor.fit_transform(data)
 
             # Save them both
-            with open(os.path.join(preprocessed_data_path, 'preprocessed_data.pkl'), 'wb') as f:
+            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'wb') as f:
                 pickle.dump(self.transformed_data, f)
-            with open(os.path.join(preprocessed_data_path, 'preprocessor.pkl'), 'wb') as f:
+            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'wb') as f:
                 pickle.dump(self.preprocessor, f)
 
             # Verification for continuous mixture
-            self.preprocessor.plot_continuous_mixtures(data, preprocessed_data_path)
+            self.preprocessor.plot_continuous_mixtures(data, self.data_dir)
 
-            logger.info("Preprocessed data have been saved in '{}'".format(preprocessed_data_path))
+            logger.info("Preprocessed data have been saved in '{}'".format(self.data_dir))
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     """                                             Fitting the model                                              """
@@ -245,7 +245,7 @@ class DATGAN:
         # Verify the integrity of the DAG and get the ordered list of variables for the Generator
         self.dag = dag
         verify_dag(data, dag)
-        self.var_order = get_order_variables(dag)
+        self.var_order, self.n_sources = get_order_variables(dag)
 
         # Define the loss function if not defined yet
         if not self.loss_function:
@@ -258,20 +258,26 @@ class DATGAN:
         # Define the trainer based on the loss function
         if self.loss_function is 'SGAN':
             self.trainer = GANTrainerClipping
+            if not self.learning_rate:
+                self.learning_rate = 1e-3
         elif self.loss_function is 'WGAN':
             self.trainer = partial(SeparateGANTrainer, g_period=3)
+            if not self.learning_rate:
+                self.learning_rate = 2e-4
         elif self.loss_function is 'WGGP':
             self.trainer = partial(SeparateGANTrainer, g_period=6)
+            if not self.learning_rate:
+                self.learning_rate = 1e-4
 
         self.metadata = self.preprocessor.metadata
-        dataflow = DATGANDataFlow(self.transformed_data, self.metadata)
+        dataflow = DATGANDataFlow(self.transformed_data, self.metadata, self.var_order)
         batch_data = BatchData(dataflow, self.batch_size)
         input_queue = QueueInput(batch_data)
 
         self.model = self.get_model()
 
         trainer = self.trainer(
-            intput=input_queue,
+            input=input_queue,
             model=self.model
         )
 
@@ -290,10 +296,12 @@ class DATGAN:
 
         callbacks = self.get_callbacks()
 
+        steps_per_epoch = max(len(data) // self.batch_size, 1)
+
         # Actually train the model!
         trainer.train_with_defaults(
             callbacks=callbacks,
-            steps_per_epoch=self.steps_per_epoch,
+            steps_per_epoch=steps_per_epoch,
             max_epoch=self.max_epoch,
             session_init=session_init,
             starting_epoch=starting_epoch
@@ -308,11 +316,11 @@ class DATGAN:
 
         Returns
         -------
-            DATGANModel:
+            DATGANSynthesizer:
                 Model implemented in tensorflow
 
         """
-        return DATGANModel(
+        return DATGANSynthesizer(
             metadata=self.metadata,
             dag=self.dag,
             batch_size=self.batch_size,
@@ -324,7 +332,9 @@ class DATGAN:
             num_gen_hidden=self.num_gen_hidden,
             num_dis_layers=self.num_dis_layers,
             num_dis_hidden=self.num_dis_hidden,
-            noisy_training=self.noisy_training,
+            label_smoothing=self.label_smoothing,
+            loss_function=self.loss_function,
+            var_order=self.var_order
         )
 
     def get_callbacks(self):
@@ -369,10 +379,11 @@ class DATGAN:
                 Synthetic dataset of 'num_samples' rows
 
         """
-        logger.info("Loading Preprocessor!")
-        # Load preprocessor
-        with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
-            self.preprocessor = pickle.load(f)
+        if not self.preprocessor:
+            logger.info("Loading Preprocessor!")
+            # Load preprocessor
+            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
+                self.preprocessor = pickle.load(f)
 
         if sampling not in ['SS', 'AS', 'SA', 'AA']:
             raise ValueError("'sampling' must take value 'SS', 'AS', 'SA', or 'AA'!")
