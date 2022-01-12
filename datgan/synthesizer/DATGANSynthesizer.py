@@ -13,7 +13,7 @@ from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack import ModelDescBase, InputDesc, FullyConnected, BatchNorm, LayerNorm, Dropout
 
-from ..utils.dag import get_in_edges
+from datgan.utils.dag import get_in_edges
 
 
 class DATGANSynthesizer(ModelDescBase):

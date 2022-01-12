@@ -13,10 +13,13 @@ with open('HISTORY.md') as history_file:
 
 install_requires = [
     'numpy>=1.16.0',
-    'pandas>=0.23.4',
+    'pandas',
+    'networkx',
     'scikit-learn>=0.20.2',
     'tensorflow>=1.13.0, <2.0',
     'tensorpack==0.9.4',
+    'matplotlib',
+    'lightgbm'
 ]
 
 setup(
