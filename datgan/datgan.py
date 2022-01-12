@@ -406,7 +406,7 @@ class DATGAN:
         ptr = 0
         features = {}
         # Go through all variables
-        for col_id, col in enumerate(self.metadata['details'].keys()):
+        for col_id, col in enumerate(self.var_order):
             # Get info
             col_info = self.metadata['details'][col]
             if col_info['type'] == 'category':
