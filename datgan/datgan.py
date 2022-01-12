@@ -66,9 +66,9 @@ class DATGAN:
             batch_size: int, default 500
                 Size of the batch to feed the model at each step.
             save_checkpoints: bool, default True
-                Whether or not to store checkpoints of the model after each training epoch.
+                Whether to store checkpoints of the model after each training epoch.
             restore_session: bool, default True
-                Whether or not continue training from the last checkpoint.
+                Whether continue training from the last checkpoint.
             learning_rate: float, default None
                 Learning rate. If set to None, the value will be set according to the chosen loss function.
             z_dim: int, default 200

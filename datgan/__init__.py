@@ -2,7 +2,7 @@
 
 __author__ = """Gael Lederrey - TRANSP-OR laboratory @ EPFL"""
 __email__ = 'gael.lederrey@epfl.ch'
-__version__ = '1.0'
+__version__ = '1.1'
 
 from datgan.datgan import DATGAN
 from datgan.evaluation.statistical_assessments import stats_assessment
