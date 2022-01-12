@@ -131,3 +131,4 @@ dmypy.json
 .idea/
 test.ipynb
 example/output
+example/results
