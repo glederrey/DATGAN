@@ -2,7 +2,6 @@
 [![Development Status](https://img.shields.io/badge/Development%20Status-3%20--%20Alpha-green)](https://pypi.org/search/?c=Development+Status+%3A%3A+3+-+Alpha)
 [![PyPi Shield](https://img.shields.io/pypi/v/DATGAN.svg)](https://pypi.python.org/pypi/DATGAN)
 <!---
-[![CodeCov](https://codecov.io/gh/glederrey/DATGAN/branch/master/graph/badge.svg)](https://codecov.io/gh/glederrey/DATGAN/)
 [![Downloads](https://pepy.tech/badge/datgan)](https://pepy.tech/project/datgan)
 --->
 
@@ -11,6 +10,8 @@ Directed Acyclic Tabular GAN (**DATGAN**) for integrating expert knowledge in sy
 - License: [GPLv3](https://github.com/glederrey/DATGAN/blob/master/LICENSE)
 - Development Status: [Alpha](https://pypi.org/search/?q=&o=&c=Development+Status+%3A%3A+3+-+Alpha)
 - Homepage: https://github.com/glederrey/DATGAN
+
+> The preprint of the article for this model will be available on arXiv by the end of February.
 
 ## Overview
 
