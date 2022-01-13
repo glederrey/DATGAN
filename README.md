@@ -238,6 +238,10 @@ When sampling the synthetic data (`DATGAN.sample`), you can choose between multi
 to continuous variables and the second to categorical variables. Therefore, `SA` means we're using simulation for 
 continuous variables and argmax for categorical variables.
 
+# Acknowledgements
+
+We would like to thank the authors of the **TGAN** article, Lei Xu and Kalyan Veeramachaneni, as well as all the contributors of the TGAN Github repository. This model has greatly inspired the ideas behind the **DATGAN** and we have used their code as a starting point to write our model. 
+
 # Citing DATGAN
 
 If you use DATGAN or its evaluation metrics, please cite the following work:
