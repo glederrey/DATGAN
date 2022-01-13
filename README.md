@@ -1,9 +1,7 @@
 
 [![Development Status](https://img.shields.io/badge/Development%20Status-3%20--%20Alpha-green)](https://pypi.org/search/?c=Development+Status+%3A%3A+3+-+Alpha)
 [![PyPi Shield](https://img.shields.io/pypi/v/DATGAN.svg)](https://pypi.python.org/pypi/DATGAN)
-<!---
 [![Downloads](https://pepy.tech/badge/datgan)](https://pepy.tech/project/datgan)
---->
 
 # DATGAN
 Directed Acyclic Tabular GAN (**DATGAN**) for integrating expert knowledge in synthetic tabular data generation.
