@@ -23,7 +23,7 @@ install_requires = [
 ]
 
 setup(
-    author="Gael Lederrey - TRANSP-OR laboratory @ EPFL",
+    author="Gael Lederrey",
     author_email='gael.lederrey@epfl.ch',
     classifiers=[
         'Development Status :: 3 - Alpha',
@@ -50,6 +50,6 @@ setup(
     packages=find_packages(include=['datgan', 'datgan.*']),
     python_requires='>=3.5',
     url='https://github.com/glederrey/DATGAN',
-    version='1.1',
+    version='1.1.1',
     zip_safe=False,
 )

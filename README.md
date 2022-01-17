@@ -19,7 +19,7 @@ between the variables and help the model to perform better.
 
 ## Requirements
 
-The current version (v1.0) of the **DATGAN** **only works with Python 3.7 and in a Jupyter notebook**. We, thus, recommend 
+The current version (v1.1.1) of the **DATGAN** **only works with Python 3.7 and in a Jupyter notebook**. We, thus, recommend 
 the user to setup a [virtualenv](https://virtualenv.pypa.io/en/latest/). 
 
 ## Installation
