@@ -24,7 +24,7 @@ the user to setup a [virtualenv](https://virtualenv.pypa.io/en/latest/).
 
 ## Installation
 
-We provide a [complete installation guide](https://github.com/glederrey/DATGAN/blob/main/INSTALL.md) 
+We provide a [complete installation guide](https://github.com/glederrey/DATGAN/blob/master/INSTALL.md) 
 using conda and setting up a virtualenv. Please follow this guide to properly set up everything and make sure that you 
 can use the DATGAN as intended.
 
