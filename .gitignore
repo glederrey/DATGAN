@@ -133,3 +133,5 @@ test.ipynb
 example/output
 example/results
 deploy.txt
+dev.ipynb
+tmp/
