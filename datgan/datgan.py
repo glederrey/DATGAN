@@ -3,20 +3,21 @@
 
 import os
 import json
+import time
 import pickle
 import tarfile
 import numpy as np
 import tensorflow as tf
 from functools import partial
+from datetime import datetime
 
-from tensorpack.utils import logger
-from tensorpack import BatchData, QueueInput, SaverRestore, ModelSaver, PredictConfig, SimpleDatasetPredictor
-
-from datgan.utils.utils import ClipCallback
-from datgan.utils.dag import verify_dag, get_order_variables
-from datgan.synthesizer.DATGANSynthesizer import DATGANSynthesizer
-from datgan.utils.trainer import GANTrainerClipping, SeparateGANTrainer
-from datgan.utils.data import Preprocessor, DATGANDataFlow, RandomZData
+#from datgan.utils.utils import ClipCallback
+#from datgan.synthesizer.DATGANSynthesizer import DATGANSynthesizer
+#from datgan.utils.trainer import GANTrainerClipping, SeparateGANTrainer
+from datgan.utils.utils import elapsed_time
+from datgan.utils.data import EncodedDataset
+from datgan.synthesizer.synthesizer import Synthesizer
+from datgan.utils.dag import verify_dag, get_order_variables, linear_DAG
 
 
 class DATGAN:
@@ -42,10 +43,10 @@ class DATGAN:
 
     """
 
-    def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=True, max_epoch=100,
-                 batch_size=500, save_checkpoints=True, restore_session=True,  learning_rate=None, z_dim=200,
+    def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=True, num_epochs=100,
+                 batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, z_dim=200,
                  num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100, noise=0.2, l2norm=0.00001,
-                 ):
+                 verbose=0):
         """
         Constructs all the necessary attributes for the DATGAN class.
 
@@ -61,7 +62,7 @@ class DATGAN:
                 Path to store the model and its artifacts.
             gpu: bool, default True
                 Use the first available GPU if there's one and tensorflow has been built with cuda.
-            max_epoch: int, default 100
+            num_epochs: int, default 100
                 Number of epochs to use during training.
             batch_size: int, default 500
                 Size of the batch to feed the model at each step.
@@ -86,6 +87,9 @@ class DATGAN:
                 set to 'TS' or 'OS')
             l2norm: float, default 0.00001
                 L2 reguralization coefficient when computing the standard GAN loss.
+            verbose: int, default 0
+                Level of verbose. 0 means nothing, 1 means that some details will be printed, 2 is mostly used for
+                debugging purpose.
 
             Raises
             ------
@@ -105,7 +109,7 @@ class DATGAN:
         self.data_dir = None
 
         # Training parameters
-        self.max_epoch = max_epoch
+        self.num_epochs = num_epochs
         self.save_checkpoints = save_checkpoints
         self.restore_session = restore_session
 
@@ -119,6 +123,7 @@ class DATGAN:
         self.num_gen_hidden = num_gen_hidden
         self.num_dis_layers = num_dis_layers
         self.num_dis_hidden = num_dis_hidden
+        self.verbose = verbose
 
         # Specific parameters for the DATGAN
         self.label_smoothing = label_smoothing
@@ -134,15 +139,13 @@ class DATGAN:
 
         # Check if there's a GPU available and tensorflow has been compiled with cuda
         if gpu:
-            if tf.test.is_gpu_available() and tf.test.is_built_with_cuda():
+            if len(tf.config.list_physical_devices('GPU')) > 0 and tf.test.is_built_with_cuda():
                 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
         # General variables that are defined in other functions
-        self.model = None
-        self.trainer = None
         self.metadata = None
-        self.preprocessor = None
-        self.transformed_data = None
+        self.synthesizer = None
+        self.encoded_data = None
         self.continuous_columns = None
         self.simple_dataset_predictor = None
 
@@ -178,11 +181,11 @@ class DATGAN:
         Returns
         -------
         """
-
         # If the preprocessed_data_path is not given, we create it
         if not preprocessed_data_path:
             preprocessed_data_path = os.path.join(self.output, 'encoded_data')
-            logger.info("No path given. Saving the encoded data here: {}".format(preprocessed_data_path))
+            if self.verbose > 1:
+                print("No path given. Saving the encoded data here: {}".format(preprocessed_data_path))
 
         if not os.path.exists(preprocessed_data_path):
             os.makedirs(preprocessed_data_path)
@@ -190,39 +193,145 @@ class DATGAN:
         self.data_dir = preprocessed_data_path
 
         # Load the existing preprocessor
-        if os.path.exists(os.path.join(self.data_dir, 'preprocessed_data.pkl')) and \
-                os.path.exists(os.path.join(self.data_dir, 'preprocessor.pkl')):
+        if os.path.exists(os.path.join(self.data_dir, 'encoded_data.pkl')):
 
             # Load the preprocessor and the preprocessed data
-            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'rb') as f:
-                self.transformed_data = pickle.load(f)
-            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
-                self.preprocessor = pickle.load(f)
+            with open(os.path.join(self.data_dir, 'encoded_data.pkl'), 'rb') as f:
+                self.encoded_data = pickle.load(f)
 
-            logger.info("Preprocessed data have been loaded!")
+            if self.verbose > 0:
+                print("Preprocessed data have been loaded!")
         else:
-            logger.info("Preprocessing the data!")
+            if self.verbose > 0:
+                print("Preprocessing the data!")
 
             # Preprocess the original data
-            self.preprocessor = Preprocessor(continuous_columns=continuous_columns)
-            self.transformed_data = self.preprocessor.fit_transform(data)
+            self.encoded_data = EncodedDataset(data, continuous_columns, self.verbose)
+            self.encoded_data.fit_transform(fitting=True)
 
             # Save them both
-            with open(os.path.join(self.data_dir, 'preprocessed_data.pkl'), 'wb') as f:
-                pickle.dump(self.transformed_data, f)
-            with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'wb') as f:
-                pickle.dump(self.preprocessor, f)
+            with open(os.path.join(self.data_dir, 'encoded_data.pkl'), 'wb') as f:
+                pickle.dump(self.encoded_data, f)
 
             # Verification for continuous mixture
-            self.preprocessor.plot_continuous_mixtures(data, self.data_dir)
+            self.encoded_data.plot_continuous_mixtures(data, self.data_dir)
 
-            logger.info("Preprocessed data have been saved in '{}'".format(self.data_dir))
+            if self.verbose > 0:
+                print("Preprocessed data have been saved in '{}'".format(self.data_dir))
+
+        # If the preprocessed_data_path is not given, we create it
+        if not preprocessed_data_path:
+            preprocessed_data_path = os.path.join(self.output, 'encoded_data')
+            print("No path given. Saving the encoded data here: {}".format(preprocessed_data_path))
+
+        if not os.path.exists(preprocessed_data_path):
+            os.makedirs(preprocessed_data_path)
+
+        self.data_dir = preprocessed_data_path
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     """                                             Fitting the model                                              """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def fit(self, data, dag, continuous_columns, preprocessed_data_path=None):
+    def fit(self, data, continuous_columns, dag=None, preprocessed_data_path=None):
+        """
+        Fit the DATGAN model to the original data and save it once it's finished training.
+        Parameters
+        ----------
+        data: pandas.DataFrame
+            Original dataset
+        continuous_columns: list[str]
+            List of the names of the continuous columns
+        dag: networkx.DiGraph, default None
+            Directed Acyclic Graph representing the relations between the variables. If no dag is provided, the
+            algorithm will create a linear DAG.
+        preprocessed_data_path: str, default None
+            Path to an existing preprocessor. If None is given, the model will preprocess the data and save it under
+            self.output + '/encoded_data'.
+        """
+
+        # Preprocess the original data
+        self.preprocess(data, continuous_columns, preprocessed_data_path)
+        self.metadata = self.encoded_data.metadata
+
+        # Verify the integrity of the DAG and get the ordered list of variables for the Generator
+        if not dag:
+            self.dag = linear_DAG(data)
+        else:
+            self.dag = dag
+
+        verify_dag(data, dag)
+        self.var_order, self.n_sources = get_order_variables(dag)
+
+        # Define the loss function if not defined yet
+        if not self.loss_function:
+            # more categorical columns than continuous
+            if float(len(continuous_columns))/float(len(data.columns)) < 0.5:
+                self.loss_function = 'WGAN'
+            else:
+                self.loss_function = 'WGGP'
+
+        if not self.learning_rate:
+            if self.loss_function == 'SGAN':
+                self.learning_rate = 1e-3
+            elif self.loss_function == 'WGAN':
+                self.learning_rate = 2e-4
+            elif self.loss_function == 'WGGP':
+                self.learning_rate = 1e-4
+
+        # Create the folders used to save the checkpoints of the model
+        if not os.path.exists(self.output):
+            os.makedirs(self.output)
+
+        start = datetime.now()
+        start_t = time.perf_counter()
+
+        # If we want to restart the training session, we need to find the pickle file
+        if self.restore_session and os.path.exists(os.path.join(self.output, 'synthesizer.pkl')):
+
+            # Load the pickle file
+            with open(os.path.join(self.output, 'synthesizer.pkl'), 'rb') as infile:
+                self.synthesizer = pickle.load(infile)
+
+            # Update some stuff in the synthesizer
+            self.synthesizer.save_checkpoints = self.save_checkpoints
+            self.synthesizer.verbose = self.verbose
+
+            # Check if we still need to train the model
+            if self.num_epochs <= self.synthesizer.trained_epoch:
+                if self.verbose > 0:
+                    print("DATGAN model has already been trained for {} epochs.".format(self.synthesizer.trained_epoch))
+                return
+            else:
+                if self.verbose > 0:
+                    dt_string = start.strftime("%d/%m/%Y %H:%M:%S")
+                    print("Continue the training of DATGAN at epoch {} ({}).".format(self.synthesizer.trained_epoch,
+                                                                                     dt_string))
+        else:
+            # Load a new synthesizer
+            if self.verbose > 0:
+                dt_string = start.strftime("%d/%m/%Y %H:%M:%S")
+                print("Start training DATGAN with the {} loss ({}).".format(self.loss_function, dt_string))
+
+            self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim,
+                                           self.noise, self.learning_rate, self.num_gen_rnn, self.num_gen_hidden,
+                                           self.num_dis_layers, self.num_dis_hidden, self.label_smoothing,
+                                           self.loss_function, self.var_order, self.n_sources, self.save_checkpoints,
+                                           self.verbose)
+
+        # Fit the model
+        self.synthesizer.fit(self.encoded_data, self.num_epochs)
+
+        end = datetime.now()
+        if self.verbose > 0:
+            dt_string = end.strftime("%d/%m/%Y %H:%M:%S")
+
+            delta = time.perf_counter()-start_t
+            str_delta = elapsed_time(delta)
+
+            print("DATGAN has finished training ({}) - Training time: {}".format(dt_string, str_delta))
+
+    def fit_old(self, data, dag, continuous_columns, preprocessed_data_path=None):
         """
         Fit the DATGAN model to the original data and save it once it's finished training.
 
@@ -256,15 +365,15 @@ class DATGAN:
                 self.loss_function = 'WGGP'
 
         # Define the trainer based on the loss function
-        if self.loss_function is 'SGAN':
+        if self.loss_function == 'SGAN':
             self.trainer = GANTrainerClipping
             if not self.learning_rate:
                 self.learning_rate = 1e-3
-        elif self.loss_function is 'WGAN':
+        elif self.loss_function == 'WGAN':
             self.trainer = partial(SeparateGANTrainer, g_period=3)
             if not self.learning_rate:
                 self.learning_rate = 2e-4
-        elif self.loss_function is 'WGGP':
+        elif self.loss_function == 'WGGP':
             self.trainer = partial(SeparateGANTrainer, g_period=6)
             if not self.learning_rate:
                 self.learning_rate = 1e-4
@@ -285,7 +394,7 @@ class DATGAN:
         session_init = None
         starting_epoch = 1
         if os.path.isfile(self.restore_path) and self.restore_session:
-            logger.info("Found an already existing model. Loading it!")
+            print("Found an already existing model. Loading it!")
 
             session_init = SaverRestore(self.restore_path)
             with open(os.path.join(self.log_dir, 'stats.json')) as f:
@@ -354,7 +463,7 @@ class DATGAN:
             callbacks.append(ModelSaver(checkpoint_dir=self.model_dir))
 
         # Callback to clip the gradient's values when training the model with the WGAN loss
-        if self.loss_function is 'WGAN':
+        if self.loss_function == 'WGAN':
             callbacks.append(ClipCallback())
 
         return callbacks
@@ -380,7 +489,7 @@ class DATGAN:
 
         """
         if not self.preprocessor:
-            logger.info("Loading Preprocessor!")
+            print("Loading Preprocessor!")
             # Load preprocessor
             with open(os.path.join(self.data_dir, 'preprocessor.pkl'), 'rb') as f:
                 self.preprocessor = pickle.load(f)
@@ -496,7 +605,7 @@ class DATGAN:
             Boolean used to overwrite the existing model
         """
         if os.path.exists(self.output) and not force:
-            logger.info('The indicated path already exists. Use `force=True` to overwrite.')
+            print('The indicated path already exists. Use `force=True` to overwrite.')
             return
 
         if not os.path.exists(self.output):
@@ -516,7 +625,7 @@ class DATGAN:
 
         self.tar_folder(self.output + name + '.tar.gz')
 
-        logger.info('Model saved successfully.')
+        print('Model saved successfully.')
 
     def tar_folder(self, tar_name):
         """

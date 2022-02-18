@@ -2,30 +2,28 @@
 # -*- coding: utf-8 -*-
 
 """
-Class used for training the DATGAN with the WGAN loss
+Other functions
 """
 
-import tensorflow as tf
-from tensorpack import Callback
-from tensorpack.utils import logger
 
+def elapsed_time(delta):
+    hours, rem = divmod(delta, 3600)
+    minutes, seconds = divmod(rem, 60)
 
-class ClipCallback(Callback):
-    """
-    Callback class that clips the value of the gradient usign the WGAN loss
+    if hours == 0:
+        if minutes == 0:
+            return "{:0>2} second{}".format(int(seconds),
+                                            's' if int(seconds) > 1 else '')
+        else:
+            return "{:0>2} minute{} and {:0>2} second{}".format(int(minutes),
+                                                                's' if int(minutes) > 1 else '',
+                                                                int(seconds),
+                                                                's' if int(seconds) > 1 else '')
+    else:
+        return "{:0>2} hour{}, {:0>2} minute{}, and {:0>2} second{}".format(int(hours),
+                                                                            's' if int(hours) > 1 else '',
+                                                                            int(minutes),
+                                                                            's' if int(minutes) > 1 else '',
+                                                                            int(seconds),
+                                                                            's' if int(seconds) > 1 else '')
 
-    """
-    def _setup_graph(self):
-
-        vars = tf.trainable_variables()
-        ops = []
-        for v in vars:
-            n = v.op.name
-            if not n.startswith('discrim/'):
-                continue
-            logger.info("Clip {}".format(n))
-            ops.append(tf.assign(v, tf.clip_by_value(v, -0.01, 0.01)))
-        self._op = tf.group(*ops, name='clip')
-
-    def _trigger_step(self):
-        self._op.run()

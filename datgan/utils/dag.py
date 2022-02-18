@@ -16,20 +16,19 @@ def verify_dag(data, dag):
 
     Parameters
     ----------
-        data: pandas.DataFrame
-            Original dataset
-        dag: networkx.DiGraph
-            Directed Acyclic Graph representing the relations between the variables
+    data: pandas.DataFrame
+        Original dataset
+    dag: networkx.DiGraph
+        Directed Acyclic Graph representing the relations between the variables
 
     Raises
     ------
-        TypeError:
-            If the variable `dag` is not of the class networkx.DiGraph.
-        ValueError:
-            If the DAG has cycles
-        ValueError:
-            If the number of nodes in the DAG does not correspond to the number of variables in the dataset.
-
+    TypeError:
+        If the variable `dag` is not of the class networkx.DiGraph.
+    ValueError:
+        If the DAG has cycles
+    ValueError:
+        If the number of nodes in the DAG does not correspond to the number of variables in the dataset.
     """
 
     # 1. Verify the type
@@ -59,13 +58,13 @@ def get_in_edges(dag):
 
     Parameters
     ----------
-        dag: networkx.DiGraph
-            Directed Acyclic Graph representing the relations between the variables
+    dag: networkx.DiGraph
+        Directed Acyclic Graph representing the relations between the variables
 
     Returns
     -------
-        in_edges: dct
-            Dictionary of in-edges for each node in the DAG
+    in_edges: dct
+        Dictionary of in-edges for each node in the DAG
     """
     # Get the in_edges
     in_edges = {}
@@ -85,15 +84,15 @@ def get_order_variables(dag):
 
     Parameters
     ----------
-        dag: networkx.DiGraph
-            Directed Acyclic Graph representing the relations between the variables
+    dag: networkx.DiGraph
+        Directed Acyclic Graph representing the relations between the variables
 
     Returns
     -------
-        treated: list[str]
-            Ordered list of the variable names
-        n_sources: int
-            Number of sources in the DAG
+    treated: list[str]
+        Ordered list of the variable names
+    n_sources: int
+        Number of sources in the DAG
     """
 
     # Get the in_edges
@@ -126,3 +125,29 @@ def get_order_variables(dag):
                 to_treat.append(edge[1])
 
     return treated, n_sources
+
+
+def linear_DAG(data):
+    """
+    Return a linear graph for the DATGAN. Each column is connected to the next one
+
+    Parameters
+    ----------
+    data: pandas.DataFrame
+        original data
+
+    Returns
+    -------
+    graph: networkx.DiGraph
+        Linear DAG
+    """
+
+    graph = nx.DiGraph()
+
+    list_ = []
+    for i in range(len(data.columns) - 1):
+        list_.append((data.columns[i], data.columns[i + 1]))
+
+    graph.add_edges_from(list_)
+
+    return graph

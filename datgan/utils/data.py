@@ -4,7 +4,7 @@
 """
 Data preprocessing related functionalities.
 
-This file contains the tools to preprare the data, from the raw csv files, to the DataFlow objects that are used to
+This file contains the tools to prepare the data, from the raw csv files, to the DataFlow objects that are used to
 fit the DATGAN model.
 
 This file contains the following classes:
@@ -24,11 +24,8 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.mixture import BayesianGaussianMixture
 
-from tensorpack.utils import logger
-from tensorpack import DataFlow, RNGDataFlow
 
-
-class Preprocessor:
+class EncodedDataset:
     """
     Transform back and forth human-readable data into DATGAN numerical features.
 
@@ -38,14 +35,21 @@ class Preprocessor:
     Original class from TGAN.
     """
 
-    def __init__(self, continuous_columns):
+    def __init__(self, data, continuous_columns, verbose):
         """Initialize object.
 
         Parameters
         ----------
-            continuous_columns: list[str]
-                List of names of the continuous variables
+        data: pandas.DataFrame
+            Original dataset
+        continuous_columns: list[str]
+            List of names of the continuous variables
+        verbose: int
+            Level of verbose.
         """
+        self.original_data = data
+        self.encoded_data = None
+
         if continuous_columns is None:
             continuous_columns = []
 
@@ -53,10 +57,41 @@ class Preprocessor:
         self.columns = None
 
         self.metadata = None
-        self.continuous_transformer = MultiModalNumberTransformer()
+        self.continuous_transformer = MultiModalNumberTransformer(verbose)
         self.categorical_transformer = LabelEncoder()
         self.columns = None
         self.categorical_argmax = None
+
+        self.verbose = verbose
+
+    def __len__(self):
+        """
+        Length of the dataset
+
+        Returns
+        -------
+        int:
+            Length of the original dataset
+        """
+
+        return len(self.original_data)
+
+    def __getitem__(self, idx):
+        """
+        Get an item from the dataset
+
+        Parameters
+        ----------
+        idx: int
+            Index
+
+        Returns
+        -------
+        pandas.DataFrame
+            The corresponding DataFrame with the given indices
+        """
+
+        return {k: self.encoded_data[k][idx] for k in self.encoded_data.keys()}
 
     def set_sampling_technique(self, sampling):
         """
@@ -72,36 +107,30 @@ class Preprocessor:
         self.categorical_argmax = (sampling in ['AA', 'SA'])
         self.continuous_transformer.argmax = (sampling in ['AA', 'AS'])
 
-    def fit_transform(self, data, fitting=True):
+    def fit_transform(self, fitting=True):
         """
         Transform human-readable data into DATGAN numerical features.
 
         Parameters
         ----------
-            data: pandas.DataFrame
-                Data to transform.
-            fitting: bool, default True
-                Whether or not to update self.metadata.
-
-        Returns
-        -------
-            dict
-                Transformed data using a dict of lists.
+        fitting: bool, default True
+            Whether or not to update self.metadata.
         """
-        num_cols = data.shape[1]
+        num_cols = self.original_data.shape[1]
 
-        transformed_data = {}
+        self.encoded_data = {}
         details = {}
 
-        self.columns = data.columns
+        self.columns = self.original_data.columns
 
         for col in self.columns:
             if col in self.continuous_columns:
-                logger.info("Encoding continuous variable \"{}\"...".format(col))
+                if self.verbose > 1:
+                    print("Encoding continuous variable \"{}\"...".format(col))
 
-                column_data = data[col].values.reshape([-1, 1])
+                column_data = self.original_data[col].values.reshape([-1, 1])
                 features, probs, model, n_modes = self.continuous_transformer.transform(column_data)
-                transformed_data[col] = np.concatenate((features, probs), axis=1)
+                self.encoded_data[col] = np.concatenate((features, probs), axis=1)
 
                 if fitting:
                     details[col] = {
@@ -110,11 +139,12 @@ class Preprocessor:
                         "transform": model,
                     }
             else:
-                logger.info("Encoding categorical variable \"{}\"...".format(col))
+                if self.verbose > 1:
+                    print("Encoding categorical variable \"{}\"...".format(col))
 
-                column_data = data[col].astype(str).values
+                column_data = self.original_data[col].astype(str).values
                 features = self.categorical_transformer.fit_transform(column_data)
-                transformed_data[col] = features.reshape([-1, 1])
+                self.encoded_data[col] = features
 
                 if fitting:
                     mapping = self.categorical_transformer.classes_
@@ -132,21 +162,19 @@ class Preprocessor:
             check_metadata(metadata)
             self.metadata = metadata
 
-        return transformed_data
-
     def transform(self, data):
         """
         Transform the given dataframe without generating new metadata.
 
         Parameters
         ----------
-            data: pandas.DataFrame
-                Data to transform.
+        data: pandas.DataFrame
+            Data to transform.
 
         Returns
         -------
-            pandas.DataFrame
-                Model features
+        pandas.DataFrame
+            Model features
         """
         return self.fit_transform(data, fitting=False)
 
@@ -156,8 +184,8 @@ class Preprocessor:
 
         Parameters
         ----------
-            data: pandas.DataFrame
-                Data to transform.
+        data: pandas.DataFrame
+            Data to transform.
         """
         self.fit_transform(data)
 
@@ -167,13 +195,13 @@ class Preprocessor:
 
         Parameters
         ----------
-            data: pandas.DataFrame
-                Data to reverse-transform.
+        data: pandas.DataFrame
+            Data to reverse-transform.
 
         Returns
         -------
-            pandas.DataFrame
-                Human-readable data
+        pandas.DataFrame
+            Human-readable data
         """
         table = []
 
@@ -203,10 +231,10 @@ class Preprocessor:
 
         Parameters
         ----------
-            data: pandas.DataFrame
-                Original data
-            path: str
-                Path of the encoded data folder
+        data: pandas.DataFrame
+            Original data
+        path: str
+            Path of the encoded data folder
         """
 
         path = os.path.join(path, 'continuous')
@@ -251,15 +279,18 @@ class MultiModalNumberTransformer:
     Original class from TGAN.
     """
 
-    def __init__(self, argmax=True):
+    def __init__(self, verbose, argmax=True):
         """
         Initialize object.
 
         Parameters
         ----------
-            argmax: bool, default True
-                Whether to use argmax or simulation to draw the values from the GMM
+        verbose: int
+            Level of verbose.
+        argmax: bool, default True
+            Whether to use argmax or simulation to draw the values from the GMM
         """
+        self.verbose = verbose
         self.max_clusters = 10
         self.std_span = 2
         self.n_bins = 50
@@ -275,16 +306,17 @@ class MultiModalNumberTransformer:
 
         Parameters
         ----------
-            data: numpy.ndarray
-                Values to cluster in array of shape (n,1).
+        data: numpy.ndarray
+            Values to cluster in array of shape (n,1).
 
         Returns
         -------
-            tuple: [numpy.ndarray, numpy.ndarray, sklearn.mixture.BayesianGaussianMixture, int]
-                Tuple containing the normalized values, probabilities, the VGM model and the number of modes
+        tuple: [numpy.ndarray, numpy.ndarray, sklearn.mixture.BayesianGaussianMixture, int]
+            Tuple containing the normalized values, probabilities, the VGM model and the number of modes
         """
         n_modes = 10
-        logger.info("  Fitting model with {:d} components".format(n_modes))
+        if self.verbose > 1:
+            print("  Fitting model with {:d} components".format(n_modes))
 
         while True:
 
@@ -310,16 +342,20 @@ class MultiModalNumberTransformer:
 
             if len(pred_) != n_modes:
                 n_modes = len(pred_)
-                logger.info("  Predictions were done on {:d} components => Fit with {:d} components!"
+                if self.verbose > 1:
+                    print("  Predictions were done on {:d} components => Fit with {:d} components!"
                             .format(n_modes, n_modes))
             elif np.sum(w) != n_modes:
                 n_modes = np.sum(w)
-                logger.info("  Some weights are too small =>  => Fit with {:d} components!".format(n_modes))
+                if self.verbose > 1:
+                    print("  Some weights are too small =>  => Fit with {:d} components!".format(n_modes))
             else:
-                logger.info("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
+                if self.verbose > 1:
+                    print("  Predictions were done on {:d} components => FINISHED!".format(n_modes))
                 break
 
-        logger.info("  Train VGM with full data")
+        if self.verbose > 1:
+            print("  Train VGM with full data")
         model.fit(data)
 
         means = model.means_.reshape((1, n_modes))
@@ -340,15 +376,15 @@ class MultiModalNumberTransformer:
 
         Parameters
         ----------
-            data: numpy.ndarray
-                Transformed data to restore.
-            info: dict
-                Metadata.
+        data: numpy.ndarray
+            Transformed data to restore.
+        info: dict
+            Metadata.
 
         Returns
         -------
-            numpy.ndarray
-                Values in the original space.
+        numpy.ndarray
+            Values in the original space.
         """
 
         gmm = info['transform']
@@ -370,147 +406,6 @@ class MultiModalNumberTransformer:
         return selected_normalized_value * self.std_span * std_t + mean_t
 
 
-class DATGANDataFlow(RNGDataFlow):
-    """
-    Subclass of tensorpack.RNGDataFlow prepared to work with numpy.ndarray.
-
-    Same as in TGAN.
-
-    Attributes
-    ----------
-        shuffle: bool
-            Whether or not to shuffle the data.
-        metadata: dict
-            Metadata for the given `data`.
-        num_features: int
-            Number of features in given `data`.
-        data: list
-            Prepared data from `filename`.
-    """
-
-    def __init__(self, data, metadata, var_order, shuffle=True):
-        """
-        Initialize object.
-
-        Parameters
-        ----------
-            data: str
-                Path to the json file containing the metadata.
-            metadata: dict
-                Description of the inputs.
-            var_order: list[str]
-                Ordered list of the variables
-            shuffle: bool, default True
-                Whether or not to shuffle the data.
-
-        Raises
-        ------
-            ValueError
-                If any column_info['type'] is not supported
-
-        """
-        self.shuffle = shuffle
-        if self.shuffle:
-            self.reset_state()
-
-        self.metadata = metadata
-        self.num_features = self.metadata['num_features']
-
-        self.data = []
-
-        for col in var_order:
-            column_info = self.metadata['details'][col]
-            if column_info['type'] == 'continuous':
-                col_data = data[col]
-                n = column_info['n']
-                value = col_data[:, :n]
-                cluster = col_data[:, n:]
-
-                self.data.append(value)
-                self.data.append(cluster)
-
-            elif column_info['type'] == 'category':
-                col_data = np.asarray(data[col], dtype='int32')
-                self.data.append(col_data)
-
-            else:
-                raise ValueError(
-                    "column_info['type'] must be either 'category' or 'continuous'."
-                    "Instead it was '{}'.".format(column_info['type'])
-                )
-
-        self.data = list(zip(*self.data))
-
-    def size(self):
-        """
-        Return the number of rows in data.
-
-        Returns
-        -------
-            int
-                Number of rows in `data`.
-
-        """
-        return len(self.data)
-
-    def get_data(self):
-        """
-        Yield the rows from `data`.
-
-        Yields
-        ------
-            tuple
-                Row of data.
-
-        """
-        idxs = np.arange(len(self.data))
-        if self.shuffle:
-            self.rng.shuffle(idxs)
-
-        for k in idxs:
-            yield self.data[k]
-
-    def __iter__(self):
-        """Iterate over self.data."""
-        return self.get_data()
-
-    def __len__(self):
-        """Length of batches."""
-        return self.size()
-
-
-class RandomZData(DataFlow):
-    """
-    Random dataflow.
-
-    Same as in TGAN.
-
-    Arguments
-    ---------
-        shape: tuple
-            Shape of the array to return on `get_data`
-
-    """
-
-    def __init__(self, shape):
-        """Initialize object."""
-        super(RandomZData, self).__init__()
-        self.shape = shape
-
-    def get_data(self):
-        """Yield random normal vectors of shape `shape`."""
-        while True:
-            yield [np.random.normal(0, 1, size=self.shape)]
-
-    def __iter__(self):
-        """Return data."""
-        return self.get_data()
-
-    def __len__(self):
-        """Length of batches."""
-        return self.shape[0]
-
-
 def check_metadata(metadata):
     """
     Check that the given metadata has correct types for all its members.
@@ -519,13 +414,13 @@ def check_metadata(metadata):
 
     Parameters
     ----------
-        metadata: dict
-            Description of the inputs.
+    metadata: dict
+        Description of the inputs.
 
     Raises
     ------
-        AssertionError
-            If any of the details is not valid.
+    AssertionError
+        If any of the details is not valid.
 
     """
     message = 'The given metadata contains unsupported types.'
@@ -541,18 +436,18 @@ def check_inputs(function):
 
     Parameters
     ----------
-        function: callable
-            Method to validate.
+    function: callable
+        Method to validate.
 
     Returns
     -------
-        callable
-            Will check the inputs before calling `function`.
+    callable
+        Will check the inputs before calling `function`.
 
     Raises
     ------
-        ValueError
-            If first argument is not a valid`numpy.array of shape (n, 1).
+    ValueError
+        If first argument is not a valid`numpy.array of shape (n, 1).
 
     """
     def decorated(self, data, *args, **kwargs):
@@ -578,8 +473,8 @@ def select_values(probs, argmax):
 
     Returns
     -------
-        float:
-            Single value selected from `probs`
+    float:
+        Single value selected from `probs`
     """
     if argmax:
         return np.argmax(probs, axis=1)
