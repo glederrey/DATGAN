@@ -18,6 +18,7 @@ import os
 import warnings
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 import matplotlib.pyplot as plt
 
 from sklearn.preprocessing import LabelEncoder
@@ -48,7 +49,7 @@ class EncodedDataset:
             Level of verbose.
         """
         self.original_data = data
-        self.encoded_data = None
+        self.data = None
 
         if continuous_columns is None:
             continuous_columns = []
@@ -91,7 +92,7 @@ class EncodedDataset:
             The corresponding DataFrame with the given indices
         """
 
-        return {k: self.encoded_data[k][idx] for k in self.encoded_data.keys()}
+        return {k: self.data[k][idx] for k in self.data.keys()}
 
     def set_sampling_technique(self, sampling):
         """
@@ -118,7 +119,7 @@ class EncodedDataset:
         """
         num_cols = self.original_data.shape[1]
 
-        self.encoded_data = {}
+        self.data = {}
         details = {}
 
         self.columns = self.original_data.columns
@@ -130,7 +131,7 @@ class EncodedDataset:
 
                 column_data = self.original_data[col].values.reshape([-1, 1])
                 features, probs, model, n_modes = self.continuous_transformer.transform(column_data)
-                self.encoded_data[col] = np.concatenate((features, probs), axis=1)
+                self.data[col] = tf.convert_to_tensor(np.concatenate((features, probs), axis=1), dtype=tf.float32)
 
                 if fitting:
                     details[col] = {
@@ -144,7 +145,7 @@ class EncodedDataset:
 
                 column_data = self.original_data[col].astype(str).values
                 features = self.categorical_transformer.fit_transform(column_data)
-                self.encoded_data[col] = features
+                self.data[col] = tf.one_hot(features, depth=self.categorical_transformer.classes_.shape[0])
 
                 if fitting:
                     mapping = self.categorical_transformer.classes_
@@ -158,6 +159,7 @@ class EncodedDataset:
             metadata = {
                 "num_features": num_cols,
                 "details": details,
+                "len": len(self.original_data)
             }
             check_metadata(metadata)
             self.metadata = metadata

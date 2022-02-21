@@ -7,18 +7,18 @@ File that describes the Generator for the DATGAN
 
 import networkx as nx
 import tensorflow as tf
-from tensorflow.python.keras import layers
-from tensorflow.python import keras
+from tensorflow.keras import layers
 
 from datgan.utils.dag import get_in_edges
 
 
-class Generator(keras.Model):
+class Generator(tf.keras.Model):
     """
     Generator of the DATGAN. It's using LSTM cells following the DAG provided as a input parameter.
     """
 
-    def __init__(self, metadata, dag, batch_size, z_dim, num_gen_rnn, num_gen_hidden, var_order, verbose):
+    def __init__(self, metadata, dag, batch_size, z_dim, num_gen_rnn, num_gen_hidden, var_order, loss_function,
+                 verbose):
         """
         Initialize the class
 
@@ -39,6 +39,8 @@ class Generator(keras.Model):
             class.
         var_order: list[str]
             Ordered list for the variables. Used in the Generator.
+        loss_function: str
+            Name of the loss function to be used. (Defined in the class DATGAN)
         verbose: int
             Level of verbose
         """
@@ -50,11 +52,25 @@ class Generator(keras.Model):
         self.num_gen_rnn = num_gen_rnn
         self.num_gen_hidden = num_gen_hidden
         self.var_order = var_order
+        self.loss_function = loss_function
         self.verbose = verbose
 
         # Get the number of sources
         self.source_nodes = [node for node, in_degree in self.dag.in_degree() if in_degree == 0]
         self.n_sources = len(self.source_nodes)
+
+        # Stuff done with networkx
+        self.in_edges = get_in_edges(self.dag)
+        self.ancestors = {}
+        self.n_successors = {}
+        for col in self.var_order:
+            self.ancestors[col] = nx.ancestors(self.dag, col)
+            self.n_successors[col] = len(list(self.dag.successors(col)))
+
+        # Regularizer
+        self.kern_reg = None
+        if self.loss_function == 'SGAN':
+            self.kern_reg = tf.keras.regularizers.L2(1e-5)
 
         # Parameters
         self.zero_inputs = None
@@ -120,10 +136,11 @@ class Generator(keras.Model):
             self.lstms[col] = layers.LSTM(self.num_gen_rnn,
                                           return_state=True,
                                           time_major=True,
+                                          kernel_regularizer=self.kern_reg,
                                           name='LSTM_{}'.format(col))
 
             # Get the ancestors of the current variable in the DAG
-            ancestors = nx.ancestors(self.dag, col)
+            ancestors = self.ancestors[col]
 
             # Get info
             col_info = self.metadata['details'][col]
@@ -136,10 +153,13 @@ class Generator(keras.Model):
             # concatenating the different inputs, cell states, and hidden states.
             if len(in_edges[col]) > 1:
                 self.miLSTM_inputs_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                              kernel_regularizer=self.kern_reg,
                                                               name='multi_input_{}'.format(col))
                 self.miLSTM_cell_states_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                                   kernel_regularizer=self.kern_reg,
                                                                    name='multi_cell_states_{}'.format(col))
                 self.miLSTM_hidden_states_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                                     kernel_regularizer=self.kern_reg,
                                                                      name='multi_hidden_states_{}'.format(col))
 
             # Compute the noise in function of the number of ancestors
@@ -153,7 +173,9 @@ class Generator(keras.Model):
                 str_ = '-'.join(src_nodes)
 
                 if str_ not in existing_noises:
-                    self.noise_layers[str_] = layers.Dense(self.z_dim, name='noise_{}'.format(str_))
+                    self.noise_layers[str_] = layers.Dense(self.z_dim,
+                                                           kernel_regularizer=self.kern_reg,
+                                                           name='noise_{}'.format(str_))
 
                     existing_noises.append(str_)
 
@@ -166,24 +188,32 @@ class Generator(keras.Model):
             # For the cell itself, we have to define multiple layers depending on the type of variables
             self.hidden_layers[col] = layers.Dense(self.num_gen_hidden,
                                                    activation='tanh',
+                                                   kernel_regularizer=self.kern_reg,
                                                    name='hidden_layer_{}'.format(col))
 
             if col_info['type'] == 'continuous':
                 self.output_layers[col + '_val'] = layers.Dense(col_info['n'],
                                                                 activation='tanh',
+                                                                kernel_regularizer=self.kern_reg,
                                                                 name='output_cont_val_{}'.format(col))
                 self.output_layers[col + '_prob'] = layers.Dense(col_info['n'],
                                                                  activation='softmax',
+                                                                 kernel_regularizer=self.kern_reg,
                                                                  name='output_cont_prob_{}'.format(col))
 
             elif col_info['type'] == 'category':
                 self.output_layers[col] = layers.Dense(col_info['n'],
                                                        activation='softmax',
+                                                       kernel_regularizer=self.kern_reg,
                                                        name='output_cat_{}'.format(col))
 
-            self.input_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                  name='next_input_{}'.format(col))
+            # If there is a successor in the graph, then we need the next input layer
+            if self.n_successors[col] > 0:
+                self.input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                      kernel_regularizer=self.kern_reg,
+                                                      name='next_input_{}'.format(col))
 
+    @tf.function
     def call(self, z):
         """
         Build the Generator
@@ -203,9 +233,6 @@ class Generator(keras.Model):
         ValueError: If any of the elements in self.metadata['details'] has an unsupported value in the `type` key.
         """
 
-        # Compute the in_edges of the dag
-        in_edges = get_in_edges(self.dag)
-
         # Some variables
         outputs = {} # Encoded synthetic variables that will be returned
         lstm_outputs = {}
@@ -221,14 +248,14 @@ class Generator(keras.Model):
         for col in self.var_order:
 
             # Get the ancestors of the current variable in the DAG
-            ancestors = nx.ancestors(self.dag, col)
+            ancestors = self.ancestors[col]
 
             # Get info
             col_info = self.metadata['details'][col]
 
             # Define the input tensor, cell state and hidden state based on the number of in-edges.
             # No ancestors => corresponds to source nodes
-            if len(in_edges[col]) == 0:
+            if len(self.in_edges[col]) == 0:
                 # Input
                 input_ = self.zero_inputs[col]
                 input_ = tf.tile(input_, [self.batch_size, 1])
@@ -237,8 +264,8 @@ class Generator(keras.Model):
                 # Hidden state
                 hidden_state = self.zero_hidden_state
             # Only 1 ancestor => simply get the corresponding values
-            elif len(in_edges[col]) == 1:
-                ancestor_col = in_edges[col][0]
+            elif len(self.in_edges[col]) == 1:
+                ancestor_col = self.in_edges[col][0]
                 # Input
                 input_ = inputs[ancestor_col]
                 # Cell state
@@ -252,7 +279,7 @@ class Generator(keras.Model):
                 miLSTM_cell_states = []
                 miLSTM_hidden_states = []
 
-                for name in in_edges[col]:
+                for name in self.in_edges[col]:
                     miLSTM_inputs.append(inputs[name])
                     miLSTM_cell_states.append(cell_states[name])
                     miLSTM_hidden_states.append(hidden_states[name])
@@ -304,8 +331,11 @@ class Generator(keras.Model):
             # Concatenate the input with the attention vector
             input_ = tf.concat([input_, noise, attention], axis=1)
 
-            [out, next_input, lstm_output, new_cell_state, new_hidden_state] = \
-                self.create_cell(col, col_info, input_, cell_state, hidden_state)
+            [out, next_input, lstm_output, new_cell_state, new_hidden_state] = self.create_cell(col,
+                                                                                                col_info,
+                                                                                                input_,
+                                                                                                cell_state,
+                                                                                                hidden_state)
 
             # Add the input to the list of inputs
             inputs[col] = next_input
@@ -384,7 +414,10 @@ class Generator(keras.Model):
                 "`continuous`. Instead it was {}.".format(col, col_info['type'])
             )
 
-        next_input = self.input_layers[col](w)
+        if self.n_successors[col] > 0:
+            next_input = self.input_layers[col](w)
+        else:
+            next_input = None
 
         return w, next_input, lstm_output, new_cell_state, new_hidden_state
 

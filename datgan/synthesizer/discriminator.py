@@ -39,6 +39,11 @@ class Discriminator(keras.Model):
         self.n_kernel = 10
         self.kernel_dim = 10
 
+        # Regularizer
+        self.kern_reg = None
+        if self.loss_function == 'SGAN':
+            self.kern_reg = tf.keras.regularizers.L2(1e-5)
+
         self.list_layers = None
         self.build_layers()
 
@@ -53,12 +58,13 @@ class Discriminator(keras.Model):
 
             if i == 0:
                 internal = [layers.Dense(self.num_dis_hidden,
-                                         kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.1))]
+                                         kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=0.1),
+                                         kernel_regularizer=self.kern_reg)]
             else:
-                internal = [layers.Dense(self.num_dis_hidden)]
+                internal = [layers.Dense(self.num_dis_hidden, kernel_regularizer=self.kern_reg)]
 
             # Add the layer for the batch_diversity
-            internal.append(layers.Dense(self.n_kernel*self.kernel_dim))
+            internal.append(layers.Dense(self.n_kernel*self.kernel_dim, kernel_regularizer=self.kern_reg))
 
             if self.loss_function == 'WGGP':
                 internal.append(layers.LayerNormalization())
@@ -71,10 +77,11 @@ class Discriminator(keras.Model):
             self.list_layers.append(internal)
 
         if self.loss_function == 'SGAN':
-            self.list_layers.append(layers.Dense(1, activation='softmax'))
+            self.list_layers.append(layers.Dense(1, activation='sigmoid', kernel_regularizer=self.kern_reg))
         else:
-            self.list_layers.append(layers.Dense(1))
+            self.list_layers.append(layers.Dense(1, kernel_regularizer=self.kern_reg))
 
+    @tf.function
     def call(self, x):
         """
         Compute the Discriminator value
