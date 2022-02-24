@@ -213,7 +213,6 @@ class Generator(tf.keras.Model):
                                                       kernel_regularizer=self.kern_reg,
                                                       name='next_input_{}'.format(col))
 
-    @tf.function
     def call(self, z):
         """
         Build the Generator

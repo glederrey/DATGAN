@@ -7,7 +7,6 @@ File that describes the Synthesizer for the DATGAN
 import os
 import json
 import time
-import pickle
 import numpy as np
 from tqdm import tqdm
 import tensorflow as tf
@@ -15,6 +14,11 @@ import tensorflow as tf
 from datgan.utils.utils import elapsed_time
 from datgan.synthesizer.generator import Generator
 from datgan.synthesizer.discriminator import Discriminator
+
+# Loss functions
+from datgan.synthesizer.losses.SGANLoss import SGANLoss
+from datgan.synthesizer.losses.WGANLoss import WGANLoss
+from datgan.synthesizer.losses.WGGPLoss import WGGPLoss
 
 
 class Synthesizer:
@@ -88,9 +92,6 @@ class Synthesizer:
         self.restore_session = restore_session
         self.verbose = verbose
 
-        # Parameter used for the WGGP loss function
-        self.lambda_ = 10
-
         # Checkpoints
         self.checkpoint = None
         self.checkpoint_manager = None
@@ -102,20 +103,13 @@ class Synthesizer:
         self.discriminator = None
         self.optimizerD = None
         self.optimizerG = None
+        self.loss = None
+        self.g_period = None
         self.data = None
-        self.logging = {'generator': {}, 'discriminator': {}}
+        self.logging = {}
 
-        if self.loss_function == 'SGAN':
-            self.cross_entropy = tf.keras.losses.BinaryCrossentropy()
-        else:
-            raise NotImplementedError("OTHER LOSS FUNCTIONS ARE NOT IMPLEMENTED YET!")
-
-        self.kl = tf.keras.losses.KLDivergence()
-
-        # Training
-        self.g_period = 1
-        if self.loss_function in ['WGAN', 'WGGP']:
-            self.g_period = 5
+        # zero value
+        self.zero = tf.Variable(0, dtype=tf.float32)
 
     def fit(self, encoded_data, num_epochs):
         """
@@ -145,7 +139,10 @@ class Synthesizer:
             time_epoch = []
 
         # Keep track of all the iterations for the WGAN and WGGP loss
-        iter_ = 0
+        iter_ = tf.Variable(0)
+
+        # Prepare the logs
+        self.loss.prepare_logs(self.logging)
 
         for epoch in iterable_epochs:
 
@@ -155,44 +152,28 @@ class Synthesizer:
             else:
                 iterable_steps = self.data
 
-            # We want to get the average value per epoch. => we collect the logs of the discriminator and the
-            # generator in these dictionaries.
-            discr_logging = {}
-            gen_logging = {}
+            # Prepare the logs for the current epoch
+            tmp_logs = {}
+            self.loss.prepare_logs(tmp_logs)
 
             for batch in iterable_steps:
 
-                d_logs_dct, g_logs_dct = self.do_step(batch, iter_)
+                transformed_batch = self.transform_data(batch, synthetic=False)
 
-                # Save values for the discriminator
-                for key in d_logs_dct:
-                    if key not in discr_logging:
-                        discr_logging[key] = [d_logs_dct[key].numpy()]
-                    else:
-                        discr_logging[key].append(d_logs_dct[key].numpy())
+                self.loss.reset_logs()
 
-                # Save values for the generator
-                for key in g_logs_dct:
-                    if key not in gen_logging:
-                        gen_logging[key] = [g_logs_dct[key].numpy()]
-                    else:
-                        gen_logging[key].append(g_logs_dct[key].numpy())
+                logs = self.do_step(transformed_batch, iter_)
+
+                for nn in logs.keys():
+                    for k in logs[nn].keys():
+                        tmp_logs[nn][k].append(logs[nn][k].numpy())
 
                 # Update the iterations
-                iter_ += 1
+                iter_.assign_add(1)
 
-            # Log some values
-            for key in discr_logging:
-                if epoch == 0:
-                    self.logging['discriminator'][key] = [np.mean(discr_logging[key], dtype=np.float64)]
-                else:
-                    self.logging['discriminator'][key].append(np.mean(discr_logging[key], dtype=np.float64))
-
-            for key in gen_logging:
-                if epoch == 0:
-                    self.logging['generator'][key] = [np.mean(gen_logging[key], dtype=np.float64)]
-                else:
-                    self.logging['generator'][key].append(np.mean(gen_logging[key], dtype=np.float64))
+            for nn in tmp_logs.keys():
+                for k in tmp_logs[nn].keys():
+                    self.logging[nn][k].append(np.mean(tmp_logs[nn][k], dtype=np.float64))
 
             # Save the log file
             with open(os.path.join(self.output, 'logging.json'), 'w') as outfile:
@@ -210,7 +191,7 @@ class Synthesizer:
                                                                                      end_time - start_time))
                 print("Generator:")
                 print("  {} loss: {:.2e}".format(self.loss_function, self.logging['generator']['gen_loss'][-1]))
-                print("  KL div.: {:.2e}".format(self.logging['generator']['kl'][-1]))
+                print("  KL div.: {:.2e}".format(self.logging['generator']['kl_div'][-1]))
                 if self.loss_function == 'SGAN':
                     print("  Reg. loss: {:.2e}".format(self.logging['generator']['reg_loss'][-1]))
                 print("\033[1m  Gen. loss: {:.2e}\033[0m".format(self.logging['generator']['loss'][-1]))
@@ -219,7 +200,7 @@ class Synthesizer:
                 if self.loss_function == 'SGAN':
                     print("  Accuracy original: {:.1f}%".format(self.logging['discriminator']['acc_orig'][-1] * 100))
                     print("  Accuracy synthetic: {:.1f}%".format(self.logging['discriminator']['acc_synth'][-1] * 100))
-                    print("  SGAN loss: {:.2e}".format(self.logging['discriminator']['d_loss'][-1]))
+                    print("  SGAN loss: {:.2e}".format(self.logging['discriminator']['discr_loss'][-1]))
                     print("  Reg. loss: {:.2e}".format(self.logging['discriminator']['reg_loss'][-1]))
 
                 else:
@@ -259,13 +240,30 @@ class Synthesizer:
 
         # Get the optimizer depending on the loss function
         if self.loss_function == 'SGAN':
+            # Optimizers
             self.optimizerG = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.5, beta_2=0.9)
-            # Smaller learning rate for the discriminator
             self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.5, beta_2=0.9)
+
+            # Loss function
+            self.g_period = 1
+            self.loss = SGANLoss(self.metadata, self.var_order)
+
         elif self.loss_function == 'WGAN':
-            pass
+            # Optimizers
+            self.optimizerG = tf.keras.optimizers.RMSprop(learning_rate=self.learning_rate)
+            self.optimizerD = tf.keras.optimizers.RMSprop(learning_rate=self.learning_rate)
+
+            # Loss function
+            self.g_period = 3
+            self.loss = WGANLoss(self.metadata, self.var_order)
         elif self.loss_function == 'WGGP':
-            pass
+            # Optimizers
+            self.optimizerG = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0, beta_2=0.9)
+            self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0, beta_2=0.9)
+
+            # Loss function
+            self.g_period = 5
+            self.loss = WGGPLoss(self.metadata, self.var_order)
 
         self.checkpoint = tf.train.Checkpoint(epoch=tf.Variable(0),
                                               generator_optimizer=self.optimizerG,
@@ -289,15 +287,16 @@ class Synthesizer:
                 with open(os.path.join(self.output, 'logging.json'), 'r') as infile:
                     self.logging = json.load(infile)
 
+    @tf.function
     def do_step(self, batch, current_iter):
         """
         Do one step of the optimization process
 
         Parameters
         ----------
-        batch: dict
-            Dictionary of tensors containing a batch of the original data
-        current_iter: int
+        batch: tf.Tensor
+            Tensor of the original data
+        current_iter: tf.Variable
             Current iteration
         """
 
@@ -310,168 +309,67 @@ class Synthesizer:
             synth = self.generator(noise, training=train_gen)
 
             # Transform the data
-            transformed_orig, transformed_synth = self.transform_data(batch, synth)
+            batch_synth = self.transform_data(synth, synthetic=True)
 
             # Use the discriminator on the original and synthetic data
-            orig_output = self.discriminator(transformed_orig, training=True)
-            synth_output = self.discriminator(transformed_synth, training=True)
+            orig_output = self.discriminator(batch, training=True)
+            synth_output = self.discriminator(batch_synth, training=True)
 
-            # Compute loss functions
-            if train_gen:
-                gen_logs = self.generator_loss(synth_output, transformed_orig, transformed_synth)
-
-                # For the SGAN model, we use regularization
-                if self.loss_function == 'SGAN':
-                    reg_loss = tf.reduce_sum(self.generator.losses)
-                    gen_logs['reg_loss'] = reg_loss
-                    gen_logs['loss'] = gen_logs['loss'] + reg_loss
-            else:
-                gen_logs = {}
-
-            discr_logs = self.discriminator_loss(orig_output, synth_output)
-
-            # For the SGAN model, we use regularization
+            # Compute the loss function for the discriminator
             if self.loss_function == 'SGAN':
-                reg_loss = tf.reduce_sum(self.discriminator.losses)
-                discr_logs['d_loss'] = discr_logs['loss']
-                discr_logs['reg_loss'] = reg_loss
-                discr_logs['loss'] = discr_logs['d_loss'] + reg_loss
+                discr_loss = self.loss.discr_loss(orig_output, synth_output, tf.reduce_sum(self.discriminator.losses))
+            elif self.loss_function == 'WGAN':
+                discr_loss = self.loss.discr_loss(orig_output, synth_output)
+            else:  # self.loss_function == 'WGGP'
+
+                # Compute interpolated values
+                alpha = tf.random.uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
+                batch_interp = alpha*batch + (tf.ones_like(alpha)-alpha)*batch_synth
+
+                interp_output = self.discriminator(batch_interp, training=True)
+
+                discr_loss = self.loss.discr_loss(orig_output, synth_output, batch_interp, interp_output)
+
+            # Compute the loss function for the generator
+            if self.loss_function == 'SGAN':
+                gen_loss = self.loss.gen_loss(synth_output,
+                                              batch,
+                                              batch_synth,
+                                              tf.reduce_sum(self.generator.losses))
+            elif self.loss_function == 'WGAN':
+                gen_loss = self.loss.gen_loss(synth_output, batch, batch_synth)
+            else:  # self.loss_function == 'WGGP'
+                gen_loss = self.loss.gen_loss(synth_output, batch, batch_synth)
 
         # Apply one step of optimization for the Generator
         if train_gen:
-            gen_grad = gen_tape.gradient(gen_logs['loss'], self.generator.trainable_variables)
+            gen_grad = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
             self.optimizerG.apply_gradients(zip(gen_grad, self.generator.trainable_variables))
 
         # Apply one step of optimization for the Discriminator
-        discr_grad = disc_tape.gradient(discr_logs['loss'], self.discriminator.trainable_variables)
+        discr_grad = disc_tape.gradient(discr_loss, self.discriminator.trainable_variables)
         self.optimizerD.apply_gradients(zip(discr_grad, self.discriminator.trainable_variables))
 
-        return discr_logs, gen_logs
+        return self.loss.get_logs()
 
-    def generator_loss(self, synth_output, transformed_orig, transformed_synth):
+    def transform_data(self, dict_, synthetic):
         """
-        Return the loss of the generator
-        Parameters
-        ----------
-        synth_output: tf.Tensor
-            Output of the discriminator on the synthetic data
-        transformed_orig: tf.Tensor
-            Tensor of the encoded original data (used for the KL div)
-        transformed_synth: tf.Tensor
-            Tensor of the encoded synthetic data (used for the KL div)
-
-        Returns
-        -------
-        dict
-            Logs of the loss function for the generator
-        """
-
-        logs = {}
-
-        if self.loss_function == 'SGAN':
-            loss = self.cross_entropy(tf.ones_like(synth_output), synth_output)
-            logs['gen_loss'] = loss
-
-        # KL divergence
-        kl = self.kl_div(transformed_orig, transformed_synth)
-
-        # Log some stuff
-        logs['kl'] = kl
-        logs['loss'] = loss + kl
-
-        return logs
-
-    def kl_div(self, original, synthetic):
-        """
-        Compute the KL divergence on the right variables.
+        Transform the original or the synthetic data in torch.Tensor.
 
         Parameters
         ----------
-        original: tf.Tensor
-            Tensor for the original encoded variables
-        synthetic: tf.Tensor
-            Tensor for the synthetic encoded variables
+        dict_: dict
+            Dictionary of the encoded data
+        synthetic: bool
+            Boolean value to say if we are passing the synthetic or original data
 
         Returns
         -------
-        tf.Tensor:
-            Sum of the KL divergences for the right variables
-
-        """
-        # KL loss
-        kl_div = 0.0
-        ptr = 0
-
-        # Go through all variables
-        for col_id, col in enumerate(self.var_order):
-            # Get info
-            col_info = self.metadata['details'][col]
-
-            if col_info['type'] == 'continuous':
-                # Skip the value. We only compute the KL on the probability vector
-                ptr += col_info['n']
-
-            dist = tf.reduce_sum(synthetic[:, ptr:ptr+col_info['n']], axis=0)
-            dist = dist / tf.reduce_sum(dist)
-
-            real = tf.reduce_sum(original[:, ptr:ptr+col_info['n']], axis=0)
-            real = real / tf.reduce_sum(real)
-
-            kl_div += self.kl(real, dist)
-            ptr += col_info['n']
-
-        return kl_div
-
-    def discriminator_loss(self, orig_output, synth_output):
-        """
-        Return the loss of the discriminator
-
-        Parameters
-        ----------
-        orig_output: tf.Tensor
-            Output of the discriminator on the original data
-        synth_output: tf.Tensor
-            Output of the discriminator on the synthetic data
-
-        Returns
-        -------
-        dict
-            Logs of the loss function for the discriminator
+        tensor: tf.Tensor
+            Transformed encoded data
         """
 
-        logs = {}
-
-        if self.loss_function == 'SGAN':
-            real_loss = self.cross_entropy(tf.ones_like(orig_output), orig_output)
-            fake_loss = self.cross_entropy(tf.zeros_like(synth_output), synth_output)
-            discr_loss = 0.5*real_loss + 0.5*fake_loss
-
-            # Log some stuff
-            logs['loss'] = discr_loss
-            logs['acc_orig'] = tf.reduce_mean(tf.cast(orig_output > 0.5, tf.float32))
-            logs['acc_synth'] = tf.reduce_mean(tf.cast(synth_output < 0.5, tf.float32))
-
-        return logs
-
-    def transform_data(self, original, synthetic):
-        """
-        Transform the original data and the synthetic data in torch.Tensor.
-        Parameters
-        ----------
-        original: dict
-            Dictionary of the original encoded data
-        synthetic: dict
-            Dictionary of the synthetic encoded data
-        Returns
-        -------
-        real: tf.Tensor
-            Transformed original encoded data
-        fake: tf.Tensor
-            Transformed synthetic encoded data
-        """
-
-        real = []
-        fake = []
+        data = []
 
         for col in self.var_order:
             # Get info
@@ -480,35 +378,24 @@ class Synthesizer:
             if col_info['type'] == 'category':
 
                 # Synthetic data
-                val_synth = synthetic[col]
+                val = dict_[col]
 
                 # Label smoothing
-                if self.label_smoothing == 'TS':
-                    noise = tf.random.uniform(val_synth.shape, minval=0, maxval=self.noise)
-                    val_synth = (val_synth + noise) / tf.reduce_sum(val_synth + noise, keepdims=True, axis=1)
+                if (synthetic and self.label_smoothing == 'TS') or \
+                        ((not synthetic) and self.label_smoothing in ['TS', 'OS']):
+                    noise = tf.random.uniform(val.shape, minval=0, maxval=self.noise)
+                    val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
 
-                fake.append(val_synth)
-
-                # Original data
-                val_orig = original[col]
-
-                # Label smoothing
-                if self.label_smoothing in ['TS', 'OS']:
-                    noise = tf.random.uniform(val_orig.shape, minval=0, maxval=self.noise)
-                    val_orig = (val_orig + noise) / tf.reduce_sum(val_orig + noise, keepdims=True, axis=1)
-
-                real.append(val_orig)
+                data.append(val)
 
             elif col_info['type'] == 'continuous':
                 # Add values
-                real.append(original[col][:, :col_info['n']])
-                fake.append(synthetic[col][:, :col_info['n']])
+                data.append(dict_[col][:, :col_info['n']])
 
                 # Add probabilities
-                real.append(original[col][:, col_info['n']:])
-                fake.append(synthetic[col][:, col_info['n']:])
+                data.append(dict_[col][:, col_info['n']:])
 
-        return tf.concat(real, axis=1), tf.concat(fake, axis=1)
+        return tf.concat(data, axis=1)
 
     def sample(self, n_samples):
         """
