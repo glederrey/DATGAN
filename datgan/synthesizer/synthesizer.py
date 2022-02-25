@@ -139,7 +139,7 @@ class Synthesizer:
             time_epoch = []
 
         # Keep track of all the iterations for the WGAN and WGGP loss
-        iter_ = tf.Variable(0)
+        iter_ = 0
 
         # Prepare the logs
         self.loss.prepare_logs(self.logging)
@@ -158,19 +158,35 @@ class Synthesizer:
 
             for batch in iterable_steps:
 
+                # Transformed the data in a tensor
                 transformed_batch = self.transform_data(batch, synthetic=False)
 
+                # Reset the logs in the class for the loss function
                 self.loss.reset_logs()
 
-                logs = self.do_step(transformed_batch, iter_)
+                #logs = self.do_step(transformed_batch, iter_)
+
+                # Train one step of the discriminator
+                discr_logs = self.train_step_discr(transformed_batch)
+
+                # Train one step of the generator
+                if iter_ % self.g_period == 0:
+                    gen_logs = self.train_step_gen(transformed_batch)
+                else:
+                    # Empty logs
+                    gen_logs = {}
+
+                # Get the logs and temporarily save them
+                logs = {'discriminator': discr_logs, 'generator': gen_logs}
 
                 for nn in logs.keys():
                     for k in logs[nn].keys():
                         tmp_logs[nn][k].append(logs[nn][k].numpy())
 
                 # Update the iterations
-                iter_.assign_add(1)
+                iter_ += 1
 
+            # Get the average values for the logs
             for nn in tmp_logs.keys():
                 for k in tmp_logs[nn].keys():
                     self.logging[nn][k].append(np.mean(tmp_logs[nn][k], dtype=np.float64))
@@ -288,25 +304,51 @@ class Synthesizer:
                     self.logging = json.load(infile)
 
     @tf.function
-    def do_step(self, batch, current_iter):
+    def train_step_gen(self, batch):
         """
-        Do one step of the optimization process
+        Do one step of the optimization process for the generator
 
         Parameters
         ----------
         batch: tf.Tensor
             Tensor of the original data
-        current_iter: tf.Variable
-            Current iteration
         """
-
         noise = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 
-        train_gen = (current_iter % self.g_period == 0)
-
-        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        with tf.GradientTape() as gen_tape:
             # Only train the generator every g_period steps
-            synth = self.generator(noise, training=train_gen)
+            synth = self.generator(noise, training=True)
+
+            # Transform the data
+            batch_synth = self.transform_data(synth, synthetic=True)
+
+            synth_output = self.discriminator(batch_synth, training=True)
+
+            gen_loss = self.loss.gen_loss(synth_output,
+                                          batch,
+                                          batch_synth,
+                                          tf.reduce_sum(self.generator.losses))
+
+        gen_grad = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
+        self.optimizerG.apply_gradients(zip(gen_grad, self.generator.trainable_variables))
+
+        return self.loss.get_logs('generator')
+
+    @tf.function
+    def train_step_discr(self, batch):
+        """
+        Do one step of the optimization process for the discriminator
+
+        Parameters
+        ----------
+        batch: tf.Tensor
+            Tensor of the original data
+        """
+        noise = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
+
+        with tf.GradientTape(persistent=True) as disc_tape:
+            # Only train the generator every g_period steps
+            synth = self.generator(noise, training=True)
 
             # Transform the data
             batch_synth = self.transform_data(synth, synthetic=True)
@@ -316,41 +358,36 @@ class Synthesizer:
             synth_output = self.discriminator(batch_synth, training=True)
 
             # Compute the loss function for the discriminator
-            if self.loss_function == 'SGAN':
-                discr_loss = self.loss.discr_loss(orig_output, synth_output, tf.reduce_sum(self.discriminator.losses))
-            elif self.loss_function == 'WGAN':
-                discr_loss = self.loss.discr_loss(orig_output, synth_output)
+            if self.loss_function in ['SGAN', 'WGAN']:
+                discr_loss = self.loss.discr_loss(orig_output,
+                                                  synth_output,
+                                                  tf.reduce_sum(self.discriminator.losses))
             else:  # self.loss_function == 'WGGP'
 
                 # Compute interpolated values
                 alpha = tf.random.uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
                 batch_interp = alpha*batch + (tf.ones_like(alpha)-alpha)*batch_synth
 
-                interp_output = self.discriminator(batch_interp, training=True)
+                with tf.GradientTape() as gp_tape:
+                    gp_tape.watch(batch_interp)
+                    interp_output = self.discriminator(batch_interp, training=True)
+                interp_grad = gp_tape.gradient(interp_output, batch_interp)
 
-                discr_loss = self.loss.discr_loss(orig_output, synth_output, batch_interp, interp_output)
-
-            # Compute the loss function for the generator
-            if self.loss_function == 'SGAN':
-                gen_loss = self.loss.gen_loss(synth_output,
-                                              batch,
-                                              batch_synth,
-                                              tf.reduce_sum(self.generator.losses))
-            elif self.loss_function == 'WGAN':
-                gen_loss = self.loss.gen_loss(synth_output, batch, batch_synth)
-            else:  # self.loss_function == 'WGGP'
-                gen_loss = self.loss.gen_loss(synth_output, batch, batch_synth)
-
-        # Apply one step of optimization for the Generator
-        if train_gen:
-            gen_grad = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
-            self.optimizerG.apply_gradients(zip(gen_grad, self.generator.trainable_variables))
+                discr_loss = self.loss.discr_loss(orig_output,
+                                                  synth_output,
+                                                  interp_grad,
+                                                  tf.reduce_sum(self.discriminator.losses))
 
         # Apply one step of optimization for the Discriminator
         discr_grad = disc_tape.gradient(discr_loss, self.discriminator.trainable_variables)
         self.optimizerD.apply_gradients(zip(discr_grad, self.discriminator.trainable_variables))
 
-        return self.loss.get_logs()
+        # Apply clipping on the weights of the discriminator for the WGAN loss
+        if self.loss_function == 'WGAN':
+            for w in self.discriminator.trainable_variables:
+                w.assign(tf.clip_by_value(w, -0.01, 0.01))
+
+        return self.loss.get_logs('discriminator')
 
     def transform_data(self, dict_, synthetic):
         """

@@ -68,9 +68,7 @@ class Generator(tf.keras.Model):
             self.n_successors[col] = len(list(self.dag.successors(col)))
 
         # Regularizer
-        self.kern_reg = None
-        if self.loss_function == 'SGAN':
-            self.kern_reg = tf.keras.regularizers.L2(1e-5)
+        self.kern_reg = tf.keras.regularizers.L2(1e-5)
 
         # Parameters
         self.zero_inputs = None

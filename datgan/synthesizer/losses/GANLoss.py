@@ -79,9 +79,9 @@ class GANLoss(tf.keras.losses.Loss):
         """
         self.logs = {'discriminator': {}, 'generator': {}}
 
-    def get_logs(self):
+    def get_logs(self, key):
         """
         Return the logs of the loss
         """
-        return self.logs
+        return self.logs[key]
 

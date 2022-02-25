@@ -23,7 +23,7 @@ class WGANLoss(GANLoss):
         """
         super().__init__(metadata, var_order, name=name)
 
-    def gen_loss(self, synth_output, transformed_orig, transformed_synth):
+    def gen_loss(self, synth_output, transformed_orig, transformed_synth, l2_reg):
         """
         Compute the Wasserstein distance and the kl divergence for the generator.
 
@@ -35,6 +35,8 @@ class WGANLoss(GANLoss):
             Original data that have been encoded and transformed into a tensor
         transformed_synth: tf.Tensor
             Synthetic data that have been encoded and transformed into a tensor
+        l2_reg: tf.Tensor
+            Loss for the L2 regularization
 
         Returns
         -------
@@ -46,15 +48,16 @@ class WGANLoss(GANLoss):
 
         kl = self.kl_div(transformed_orig, transformed_synth)
 
-        loss = wass_loss + kl
+        loss = wass_loss + kl + l2_reg
 
         self.logs['generator']['gen_loss'] = wass_loss
         self.logs['generator']['kl_div'] = kl
+        self.logs['generator']['reg_loss'] = l2_reg
         self.logs['generator']['loss'] = loss
 
         return loss
 
-    def discr_loss(self, orig_output, synth_output):
+    def discr_loss(self, orig_output, synth_output, l2_reg):
         """
         Compute the Wasserstein distance for the discriminator.
 
@@ -64,6 +67,8 @@ class WGANLoss(GANLoss):
             Output of the discriminator on the original data
         synth_output: tf.Tensor
             Output of the discriminator on the synthetic data
+        l2_reg: tf.Tensor
+            Loss for the L2 regularization
 
         Returns
         -------
@@ -73,11 +78,12 @@ class WGANLoss(GANLoss):
 
         real_loss = tf.reduce_mean(orig_output)
         fake_loss = tf.reduce_mean(synth_output)
-        loss = fake_loss - real_loss
+        loss = fake_loss - real_loss + l2_reg
 
         # Log stuff
         self.logs['discriminator']['loss_real'] = real_loss
         self.logs['discriminator']['loss_fake'] = fake_loss
+        self.logs['discriminator']['reg_loss'] = l2_reg
         self.logs['discriminator']['loss'] = loss
 
         return loss
@@ -94,10 +100,10 @@ class WGANLoss(GANLoss):
 
         logs['discriminator'] = {}
 
-        for l in ['loss_real', 'loss_fake', 'loss']:
+        for l in ['loss_real', 'loss_fake', 'loss', 'reg_loss']:
             logs['discriminator'][l] = []
 
         logs['generator'] = {}
 
-        for l in ['gen_loss', 'kl_div', 'loss']:
+        for l in ['gen_loss', 'kl_div', 'loss', 'reg_loss']:
             logs['generator'][l] = []

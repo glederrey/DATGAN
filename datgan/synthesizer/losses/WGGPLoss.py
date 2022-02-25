@@ -23,9 +23,9 @@ class WGGPLoss(GANLoss):
         """
         super().__init__(metadata, var_order, name=name)
 
-        self.lambda_ = tf.Variable(10, dtype=tf.float32)
+        self.lambda_ = tf.Variable(10.0, dtype=tf.float32)
 
-    def gen_loss(self, synth_output, transformed_orig, transformed_synth):
+    def gen_loss(self, synth_output, transformed_orig, transformed_synth, l2_reg):
         """
         Compute the Wasserstein distance and the kl divergence for the generator.
 
@@ -37,6 +37,8 @@ class WGGPLoss(GANLoss):
             Original data that have been encoded and transformed into a tensor
         transformed_synth: tf.Tensor
             Synthetic data that have been encoded and transformed into a tensor
+        l2_reg: tf.Tensor
+            Loss for the L2 regularization
 
         Returns
         -------
@@ -48,15 +50,16 @@ class WGGPLoss(GANLoss):
 
         kl = self.kl_div(transformed_orig, transformed_synth)
 
-        loss = wass_loss + kl
+        loss = wass_loss + kl + l2_reg
 
         self.logs['generator']['gen_loss'] = wass_loss
         self.logs['generator']['kl_div'] = kl
+        self.logs['generator']['reg_loss'] = l2_reg
         self.logs['generator']['loss'] = loss
 
         return loss
 
-    def discr_loss(self, orig_output, synth_output, batch_interp, interp_output):
+    def discr_loss(self, orig_output, synth_output, interp_grad, l2_reg):
         """
         Compute the Wasserstein distance for the discriminator.
 
@@ -66,10 +69,10 @@ class WGGPLoss(GANLoss):
             Output of the discriminator on the original data
         synth_output: tf.Tensor
             Output of the discriminator on the synthetic data
-        batch_interp: tf.Tensor
-            Interpolated values between the original and synthetic ones
-        interp_output: tf.Tensor
-            Output of the discriminator on the interpolated data
+        interp_grad: tf.Tensor
+            Gradient of the discriminator at the interpolated data
+        l2_reg: tf.Tensor
+            Loss for the L2 regularization
 
         Returns
         -------
@@ -81,21 +84,18 @@ class WGGPLoss(GANLoss):
         fake_loss = tf.reduce_mean(synth_output)
 
         # the gradient penalty loss
-        gradients = tf.gradients(interp_output, batch_interp)[0]
-        red_idx = list(range(1, batch_interp.shape.ndims))
-        slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), axis=red_idx))
-        gradients_rms = tf.sqrt(tf.reduce_mean(tf.square(slopes)))
-        gradient_penalty = tf.reduce_mean(tf.square(slopes - 1))
-        grad_pen = self.lambda_ * gradient_penalty
+        interp_grad_norm = tf.sqrt(tf.reduce_sum(tf.square(interp_grad), axis=[1]))
+        grad_pen = self.lambda_ * tf.reduce_mean((interp_grad_norm - 1.0) ** 2)
 
         # Full loss
-        loss = fake_loss - real_loss + grad_pen
+        loss = fake_loss - real_loss + grad_pen + l2_reg
 
         # Log stuff
         self.logs['discriminator']['loss_real'] = real_loss
         self.logs['discriminator']['loss_fake'] = fake_loss
         self.logs['discriminator']['wass_loss'] = fake_loss - real_loss
         self.logs['discriminator']['grad_pen'] = grad_pen
+        self.logs['discriminator']['reg_loss'] = l2_reg
         self.logs['discriminator']['loss'] = loss
 
         return loss
@@ -112,10 +112,10 @@ class WGGPLoss(GANLoss):
 
         logs['discriminator'] = {}
 
-        for l in ['loss_real', 'loss_fake', 'wass_loss', 'grad_pen', 'loss']:
+        for l in ['loss_real', 'loss_fake', 'wass_loss', 'grad_pen', 'loss', 'reg_loss']:
             logs['discriminator'][l] = []
 
         logs['generator'] = {}
 
-        for l in ['gen_loss', 'kl_div', 'loss']:
+        for l in ['gen_loss', 'kl_div', 'loss', 'reg_loss']:
             logs['generator'][l] = []
