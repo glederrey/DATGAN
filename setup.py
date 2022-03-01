@@ -13,13 +13,13 @@ with open('HISTORY.md') as history_file:
 
 install_requires = [
     'numpy>=1.16.0',
-    'pandas',
-    'networkx',
-    'scikit-learn>=0.20.2',
-    'tensorflow>=1.13.0, <2.0',
-    'tensorpack==0.9.4',
-    'matplotlib',
-    'lightgbm'
+    'pandas>=1.3',
+    'networkx>=2.6',
+    'scikit-learn>=1.0.2',
+    'tensorflow>=2.8.0',
+    'matplotlib>=3.5',
+    'lightgbm>=3.3',
+    'tqdm>=4.62.3'
 ]
 
 setup(
@@ -31,7 +31,7 @@ setup(
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Natural Language :: English',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.9',
     ],
     description="Generative adversarial network with integrated expert knowledge for synthesizing tabular data",
     entry_points={
@@ -48,8 +48,8 @@ setup(
     keywords='datgan',
     name='datgan',
     packages=find_packages(include=['datgan', 'datgan.*']),
-    python_requires='>=3.5',
+    python_requires='>=3.9',
     url='https://github.com/glederrey/DATGAN',
-    version='1.1.1',
+    version='2.0.0',
     zip_safe=False,
 )

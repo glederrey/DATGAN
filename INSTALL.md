@@ -1,9 +1,6 @@
 # Installation
 
-Here are the steps to setup a virtual environment with conda, install the **DATGAN** package and use it. 
-
->⚠️ The current version of the **DATGAN** only works with Python 3.7 and inside a Jupyter Notebook. This issue will be 
-> fixed in later versions.
+Here are the steps to setup a virtual environment with conda, install the **DATGAN** package and use it.
 
 # Requirements:
 
@@ -12,6 +9,8 @@ Make sure the following software are installed on your machine.
 - Any Python version
 - Conda
 - Jupyter Notebook
+- CUDA Toolkit 11.6 (Download it [here](https://developer.nvidia.com/cuda-downloads).)
+- cuDNN (Download it [here](https://developer.nvidia.com/cudnn))
 
 # Steps to install the DATGAN library
 
@@ -23,7 +22,7 @@ We highly recommend creating a virtual environment to use the **DATGAN** library
    the name of the environment you want to give)
 
 ```python
-conda create -n ENV_NAME python=3.7
+conda create -n ENV_NAME python=3.9
 ```
 
 1. We can activate the environment using the command below. On Windows, you might have issues with your current shell. 
@@ -47,31 +46,6 @@ python -m ipykernel install --user --name=ENV_NAME
 
 4. You can start Jupyter notebook. If everything worked correctly, you should see the new environment when clicking on **New**.
 
-## Installing tensorflow
-
-> ⚠️ **Warning**: You need to stay in the same environment while installing tensorflow and the **DATGAN** library. If 
-> you’re not sure, open Anaconda Prompt or a terminal and reactivate the environment as under point 2.
-
-You need to install tensorflow. We recommend doing it before installing the library. If you have a GPU available, 
-install tensorflow using the following command:
-
-```python
-pip install tensorflow-gpu==1.15
-```
-
-You can test that the tensorflow was correctly installed using the following command (it should return `True`):
-
-```python
-tensorflow.test.is_gpu_available()
-```
-
-If you do not have a GPU available, you can install tensorflow normally. However, the model will be very slow to train. 
-To install the tensorflow version without GPU, use the following command:
-
-```python
-pip install tensorflow==1.15
-```
-
 ## Installing the DATGAN library
 
 You can now install the **DATGAN** library using the following command:
@@ -79,6 +53,9 @@ You can now install the **DATGAN** library using the following command:
 ```python
 pip install datgan
 ```
+
+The **DATGAN** library will install all the requirements for the library to function correctly. However, it might be a 
+good idea to install Tensorflow 2 manually and test if it find your GPU. (Some issues can happen at this step.)
 
 # Testing the DATGAN library
 

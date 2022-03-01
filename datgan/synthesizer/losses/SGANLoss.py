@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import tensorflow as tf
-
 from datgan.synthesizer.losses.GANLoss import GANLoss
 
 

@@ -36,10 +36,10 @@ class DATGAN:
 
     """
 
-    def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=True, num_epochs=100,
+    def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=None, num_epochs=100,
                  batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, g_period=None,
                  l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100,
-                 noise=0.2, verbose=0):
+                 noise=0.2, verbose=1):
         """
         Constructs all the necessary attributes for the DATGAN class.
 
@@ -53,8 +53,9 @@ class DATGAN:
                 Type of label smoothing. Only accepts the values 'TS', 'OS', and 'NO'.
             output: str, default 'output'
                 Path to store the model and its artifacts.
-            gpu: bool, default True
-                Use the first available GPU if there's one and tensorflow has been built with cuda.
+            gpu: int, default None
+                Model will automatically try to use GPU if tensorflow can use CUDA. However, this parameter allows you
+                to choose which GPU you want to use.
             num_epochs: int, default 100
                 Number of epochs to use during training.
             batch_size: int, default 500
@@ -136,9 +137,8 @@ class DATGAN:
                              "with gradient penalty).")
 
         # Check if there's a GPU available and tensorflow has been compiled with cuda
-        if gpu:
-            if len(tf.config.list_physical_devices('GPU')) > 0 and tf.test.is_built_with_cuda():
-                os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+        if len(tf.config.list_physical_devices('GPU')) > 0 and tf.test.is_built_with_cuda():
+            os.environ['CUDA_VISIBLE_DEVICES'] = "0" if not gpu else str(gpu)
 
         # General variables that are defined in other functions
         self.metadata = None
@@ -397,9 +397,9 @@ class DATGAN:
             if self.loss_function == 'SGAN':
                 self.g_period = 1
             elif self.loss_function == 'WGAN':
-                self.g_period = 2
+                self.g_period = 3
             elif self.loss_function == 'WGGP':
-                self.g_period = 4
+                self.g_period = 5
 
         # Define the l2 regularization
         if not self.l2_reg:

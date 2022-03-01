@@ -6,12 +6,6 @@ Data preprocessing related functionalities.
 
 This file contains the tools to prepare the data, from the raw csv files, to the DataFlow objects that are used to
 fit the DATGAN model.
-
-This file contains the following classes:
-- Preprocessor
-- MultiModalNumberTransformer
-- DATGANDataFlow
-- RandomZData
 """
 
 import os

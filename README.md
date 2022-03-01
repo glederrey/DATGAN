@@ -9,7 +9,7 @@ Directed Acyclic Tabular GAN (**DATGAN**) for integrating expert knowledge in sy
 - Development Status: [Alpha](https://pypi.org/search/?q=&o=&c=Development+Status+%3A%3A+3+-+Alpha)
 - Homepage: https://github.com/glederrey/DATGAN
 
-> The preprint of the article for this model will be available on arXiv by the end of February.
+> The preprint of the article for this model will be available on arXiv by the end of February/early March.
 
 ## Overview
 
@@ -19,8 +19,8 @@ between the variables and help the model to perform better.
 
 ## Requirements
 
-The current version (v1.1.1) of the **DATGAN** **only works with Python 3.7 and in a Jupyter notebook**. We, thus, recommend 
-the user to setup a [virtualenv](https://virtualenv.pypa.io/en/latest/). 
+The current version (v2.0.0) of the **DATGAN** works with Python 3.9 (earlier versions have not been tested) and 
+Tensorflow 2. We, thus, recommend the user to set up a [virtualenv](https://virtualenv.pypa.io/en/latest/). 
 
 ## Installation
 
@@ -112,31 +112,30 @@ graph.add_edges_from([
 ])
 ```
 
-Example of a linear DAG:
-```python
-import networkx as nx
-
-graph = nx.DiGraph()
-
-list_ = []
-for i in range(len(df.columns)-1):
-    list_.append((df.columns[i], df.columns[i+1]))
-    
-graph.add_edges_from(list_)
-```
+If you do not have any idea how to create your DAG, it is possible to not provide any DAG to the model. However, in 
+this case, the model will define a _linear_ DAG, _i.e._ each variable in the dataset is linked to the next one following
+the order of the columns. It can be useful to quickly test the model. However, it will reduce the performance of the 
+model as shown in the article.
 
 ### 3. Create a DATGAN instance
 
-The next step is to import **DATGAN** and create an instance of the model. The only required parameter when 
-instantiating the DATGAN is an output folder. The other parameters are set to their default values.
+The next step is to import **DATGAN** and create an instance of the model. There are no required parameters for the 
+model. However, we advise you to set up the basic parameters such as the output folder (`output`), batch size 
+(`batch_size`), and verbose level (`verbose`).
 
 ```python
 output_folder = './output/'
+batch_size = 558
 
 from datgan import DATGAN
 
-datgan = datgan = DATGAN(output=output_folder)
+datgan = DATGAN(output=output_folder, batch_size=batch_size, verbose=1)
 ```
+
+**NOTE**: Setting up a suitable batch size is really important. A batch size too big will make the model crash due to 
+memory error while one that is too small will make the model slower to train. Trials and errors are required 
+depending on your hardware. In addition, it is good to find a batch size such that `len(df) % batch_size` is as small 
+as possible since the last batch of data is dropped if it is smaller than the batch size. 
 
 ### 4. Preprocess the data (optional)
 
@@ -173,74 +172,83 @@ we, thus, advise you to treat such column as continuous and, then, round the val
 ### 7. Save and load a model
 
 In the steps above we saw that the fitting process can take a lot of time, so we probably would
-like to avoid having to fit every we want to generate samples. Instead we can fit a model once,
-save it, and load it every time we want to sample new data.
+like to avoid having to fit every we want to generate samples. We advise the use to save checkpoints of the model while
+it is training. However, if you do not want to do that, the model will always save the latest checkpoint once it has
+finished training. You can, thus, load it at any time afterwards.
 
-If we have a fitted model, we can save it by calling it's `save` method, that only takes
-as argument the name of the trained model. (the path corresponds to the `output` of the **DATGAN**). 
-Similarly, the `DATGAN.load` allows to load a model stored on disk by passing as argument the path where the model is 
-stored.
-
-```python
-datgan.save('trained', force=True)
-```
-
-Bear in mind that in case the file already exists, **DATGAN** will avoid overwritting it unless the
-`force=True` argument is passed.
-
-Once the model is saved, it can be loaded back as a **DATGAN** instance by using the `DATGAN.load` method. You need to 
-provide both the output folder, and the name you used to save the model:
+In order to load the model, you can simply call the function `load` with the parameters used while fitting the model.
+In order to save memory, we only save the parameters of the Generator and Discriminator. Therefore, more information is
+required to load the model.
 
 ```python
-new_datgan = DATGAN.load(output_folder, 'trained')
+new_datgan = datgan.load(df, graph, continuous_columns, preprocessed_data_path='./encoded_data')
 ```
 
-At this point we could use this model instance to generate more samples.
+At this point we can use this model instance to generate more samples.
 
 # Model parameters
 
-If you want to change the default behavior of `DATGAN`, such as as different `batch_size` or
-`max_epochs`, you can do so by passing different arguments when creating the instance.
+If you want to change the default behavior of `DATGAN`, such as using different batch size or the total number of 
+epochs, you can do so by passing different arguments when creating the **DATGAN** instance.
 
 ## Loading the model
 
-- `loss_function` (`str`, default `None`): Name of the loss function to be used. If not specified, it will choose 
-  between `'WGAN'` and `'WGGP'` depending on the ratio of continuous and categorical columns. Only accepts the values 
-  `'SGAN'`, `'WGAN'`, and `'WGGP'`.
-- `label_smoothing` (`str`, default `'TS'`): Type of label smoothing. Only accepts the values `'TS'`, `'OS'`, and 
-  `'NO'`. 
-- `output` (`str`, default `'output'`): Path to store the model and its artifacts.
-- `gpu` (`bool`, default `True`): Use the first available GPU if there's one and tensorflow has been built with cuda.
-- `max_epoch` (`int`, default `100`): Number of epochs to use during training.
-- `batch_size` (`int`, default `500`): Size of the batch to feed the model at each step.
-- `save_checkpoints` (`bool`, default `True`): Whether to store checkpoints of the model after each training epoch.
-- `restore_session` (`bool`, default `True`): Whether continue training from the last checkpoint.
-- `learning_rate` (`float`, default `None`): Learning rate. If set to None, the value will be set according to the 
-  chosen loss function.
-- `z_dim` (`int`, default `200`): Dimension of the noise vector used as an input to the generator.
-- `num_gen_rnn` (`int`, default `100`): Size of the hidden units in the LSTM cell.
-- `num_gen_hidden` (`int`, default `50`): Size of the hidden layer used on the output of the generator to act as a 
-  convolution.
-- `num_dis_layers` (`int`, default `1`): Number of layers for the discriminator.
-- `num_dis_hidden` (`int`, default `100`): Size of the hidden layers in the discriminator.
-- `noise` (`float`, default `0.2`): Upper bound to the gaussian noise added to with the label smoothing. (only used if 
-  `label_smoothing` is set to `'TS'` or `'OS'`)
-- `l2norm` (`float`, default `0.00001`): L2 reguralization coefficient when computing the standard GAN loss.
+| Name               |  Type   |   Default    | Explanation                                                                                                                                                                                                                  |
+|:-------------------|:-------:|:------------:|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `loss_function`    |  `str`  |    `None`    | Name of the loss function to be used. If not specified, it will choose between `'WGAN'` and `'WGGP'` depending on the ratio of continuous and categorical columns. Only accepts the values `'SGAN'`, `'WGAN'`, and `'WGGP'`. |
+| `label_smoothing`  |  `str`  |    `'TS'`    | Type of label smoothing. Only accepts the values `'TS'`, `'OS'`, and `'NO'`.                                                                                                                                                 |
+| `output`           |  `str`  | `'./output'` | Path to store the model and its artifacts.                                                                                                                                                                                   |
+| `gpu`              |  `int`  |    `None`    | Model will automatically try to use GPU if tensorflow can use CUDA. However, this parameter allows you to choose which GPU you want to use.                                                                                  |
+| `num_epochs`       |  `int`  |    `100`     | Number of epochs to use during training.                                                                                                                                                                                     |
+| `batch_size`       |  `int`  |    `500`     | Size of the batch to feed the model at each step.                                                                                                                                                                            |
+| `save_checkpoints` | `bool`  |    `True`    | Whether to store checkpoints of the model after each training epoch.                                                                                                                                                         |
+| `restore_session`  | `bool`  |    `True`    | Whether continue training from the last checkpoint.                                                                                                                                                                          |
+| `learning_rate`    | `float` |    `None`    | Learning rate. If set to None, the value will be set according to the chosen loss function.                                                                                                                                  |
+| `g_period`         |  `int`  |    `None`    | Every `g_period` steps, train the generator once. (Used to train the discriminator more than the generator) By default, it will choose values according the chosen loss function.                                            |
+| `l2_reg`           | `bool`  |    `None`    | Tell the model to use L2 regularization while training both NNs. By default, it only applies the L2 regularization when using the SGAN loss function.                                                                        |
+| `z_dim`            |  `int`  |    `200`     | Dimension of the noise vector used as an input to the generator.                                                                                                                                                             |
+| `num_gen_rnn`      |  `int`  |    `100`     | Size of the hidden units in the LSTM cell.                                                                                                                                                                                   |
+| `num_gen_hidden`   |  `int`  |     `50`     | Size of the hidden layer used on the output of the generator to act as a convolution.                                                                                                                                        |
+| `num_dis_layers`   |  `int`  |     `1`      | Number of layers for the discriminator.                                                                                                                                                                                      |
+| `num_dis_hidden`   |  `int`  |    `100`     | Size of the hidden layers in the discriminator.                                                                                                                                                                              |
+| `noise`            | `float` |    `0.2`     | Upper bound to the gaussian noise added to with the label smoothing. (only used if `label_smoothing` is set to `'TS'` or `'OS'`)                                                                                             |
+| `verbose`          |  `int`  |     `1`      | Level of verbose. 0 means no print, 1 means that some details will be printed, 2 is mostly used for debugging purpose.                                                                                                       |
+
 
 ## Sampling synthetic data
 
 When sampling the synthetic data (`DATGAN.sample`), you can choose between multiple sampling strategies. 
 
-- `sampling` (`str`, default `SS`): Type of sampling to use. Only accepts the following values: `'SS'`, `'SA'`, `'AS'`, 
-  and `'AA'`.
-  
+| Name       | Type  | Default | Explanation                                                                                     |
+|:-----------|:-----:|:-------:|:------------------------------------------------------------------------------------------------|
+| `sampling` | `str` |  `SS`   | Type of sampling to use. Only accepts the following values: `'SS'`, `'SA'`, `'AS'`, and `'AA'`. |
+
+
 `S` means we are using simulation to sample the data, `A` means that we are using argmax. The first letter corresponds 
 to continuous variables and the second to categorical variables. Therefore, `SA` means we're using simulation for 
 continuous variables and argmax for categorical variables.
 
+# Tips and tricks
+
+While the **DATGAN** model will automatically choose the parameters of the model if none are provided, we highly 
+recommend the user to "play" with them. The most important ones are the following:
+- `loss_function` Generally, the `WGAN` loss function works better on datasets with more categorical columns than 
+continuous. It is the contrary for the `WGGP` loss. The `SGAN` loss seems to perform a bit less good than the other two
+in the specific cases. However, it seems to perform ok in any cases. 
+- `g_period` This parameter is especially important when using either the `WGAN` or the `WGGP` loss. Generally, the 
+latter requires a lot more training of the discriminator than the previous. However, it might be interesting to test 
+different values to see which one leads to the best results.
+- `l2_reg` The L2 regularization is "mandatory" for the `SGAN` loss and "forbidden" for the `WGAN` loss. The user can 
+test these other configurations, but it will lead to worse results. However, for the `WGGP` loss, there are no specific
+rules whether to apply it or not. Therefore, it might be interesting to test this parameter as well.
+- `learning_rate` It has been fixed depending on the loss function. However, as for any optimization problem, playing 
+with the learning rate to find the optimal value is always important.
+
 # Acknowledgements
 
-We would like to thank the authors of the **TGAN** article, Lei Xu and Kalyan Veeramachaneni, as well as all the contributors of the TGAN Github repository. This model has greatly inspired the ideas behind the **DATGAN** and we have used their code as a starting point to write our model. 
+We would like to thank the authors of the **TGAN** article, Lei Xu and Kalyan Veeramachaneni, as well as all the 
+contributors of the TGAN Github repository. This model has greatly inspired the ideas behind the **DATGAN** and we have 
+used their code as a starting point to write our model. 
 
 # Citing DATGAN
 
@@ -251,4 +259,4 @@ If you use DATGAN or its evaluation metrics, please cite the following work:
 
 **FULL CITATION COMING SOON!**
 
-The original code for this paper can be found in this Github repository: https://github.com/glederrey/SynthPop.
+The original code for this article can be found in this Github repository: https://github.com/glederrey/SynthPop.
