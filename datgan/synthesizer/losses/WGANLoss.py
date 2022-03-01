@@ -35,8 +35,7 @@ class WGANLoss(GANLoss):
             Original data that have been encoded and transformed into a tensor
         transformed_synth: tf.Tensor
             Synthetic data that have been encoded and transformed into a tensor
-        l2_reg: tf.Tensor
-            Loss for the L2 regularization
+
 
         Returns
         -------
@@ -67,8 +66,6 @@ class WGANLoss(GANLoss):
             Output of the discriminator on the original data
         synth_output: tf.Tensor
             Output of the discriminator on the synthetic data
-        l2_reg: tf.Tensor
-            Loss for the L2 regularization
 
         Returns
         -------

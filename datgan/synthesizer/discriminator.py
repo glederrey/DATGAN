@@ -17,7 +17,7 @@ class Discriminator(keras.Model):
 
     """
 
-    def __init__(self, num_dis_layers, num_dis_hidden, loss_function):
+    def __init__(self, num_dis_layers, num_dis_hidden, loss_function, l2_reg):
         """
         Initialize the model
 
@@ -29,18 +29,24 @@ class Discriminator(keras.Model):
             Size of the hidden layers in the discriminator. (Default value in class DATGAN: 100)
         loss_function: str
             Name of the loss function to be used. (Defined in the class DATGAN)
+        l2_reg: bool
+            Use l2 regularization or not
         """
         super().__init__()
         self.num_dis_layers = num_dis_layers
         self.num_dis_hidden = num_dis_hidden
         self.loss_function = loss_function
+        self.l2_reg = l2_reg
 
         # Batch diversity parameters
         self.n_kernel = 10
         self.kernel_dim = 10
 
-        # Regularizer (used with the SGAN loss function)
-        self.kern_reg = tf.keras.regularizers.L2(1e-5)
+        # Regularizer
+        if self.l2_reg:
+            self.kern_reg = tf.keras.regularizers.L2(1e-5)
+        else:
+            self.kern_reg = None
 
         self.list_layers = None
         self.build_layers()
@@ -78,9 +84,9 @@ class Discriminator(keras.Model):
                                                           scale=False,
                                                           beta_regularizer=self.kern_reg))
 
-            internal.append(layers.LeakyReLU())
+            internal.append(layers.Dropout(0.5))
 
-            internal.append(layers.Dropout(0.2))
+            internal.append(layers.LeakyReLU())
 
             self.list_layers.append(internal)
 
@@ -119,10 +125,10 @@ class Discriminator(keras.Model):
             # Pass through LayerNorm or BatchNorm
             x = internal[2](x)
 
-            # Use leaky_ReLU
+            # Dropout
             x = internal[3](x)
 
-            # Pass through Dropout
+            # LeakyReLU
             x = internal[4](x)
 
         # Pass through the output layer

@@ -2,18 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import os
-import json
 import time
 import pickle
-import tarfile
-import numpy as np
 import tensorflow as tf
-from functools import partial
 from datetime import datetime
 
-#from datgan.utils.utils import ClipCallback
-#from datgan.synthesizer.DATGANSynthesizer import DATGANSynthesizer
-#from datgan.utils.trainer import GANTrainerClipping, SeparateGANTrainer
 from datgan.utils.utils import elapsed_time
 from datgan.utils.data import EncodedDataset
 from datgan.synthesizer.synthesizer import Synthesizer
@@ -44,8 +37,9 @@ class DATGAN:
     """
 
     def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=True, num_epochs=100,
-                 batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, z_dim=200,
-                 num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100, noise=0.2, verbose=0):
+                 batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, g_period=None,
+                 l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100,
+                 noise=0.2, verbose=0):
         """
         Constructs all the necessary attributes for the DATGAN class.
 
@@ -71,6 +65,12 @@ class DATGAN:
                 Whether continue training from the last checkpoint.
             learning_rate: float, default None
                 Learning rate. If set to None, the value will be set according to the chosen loss function.
+            g_period: int, default None
+                Every "g_period" steps, train the generator once. (Used to train the discriminator more than the
+                generator) By default, it will choose values according the chosen loss function.
+            l2_reg: bool, default None
+                Tell the model to use L2 regularization while training both NNs. By default, it applies the L2
+                regularization when using the SGAN loss function.
             z_dim: int, default 200
                 Dimension of the noise vector used as an input to the generator.
             num_gen_rnn: int, default 100
@@ -115,6 +115,8 @@ class DATGAN:
         self.z_dim = z_dim
         self.noise = noise
         self.learning_rate = learning_rate
+        self.g_period = g_period
+        self.l2_reg = l2_reg
         self.num_gen_rnn = num_gen_rnn
         self.num_gen_hidden = num_gen_hidden
         self.num_dis_layers = num_dis_layers
@@ -259,21 +261,7 @@ class DATGAN:
         verify_dag(data, dag)
         self.var_order, self.n_sources = get_order_variables(dag)
 
-        # Define the loss function if not defined yet
-        if not self.loss_function:
-            # more categorical columns than continuous
-            if float(len(continuous_columns))/float(len(data.columns)) < 0.5:
-                self.loss_function = 'WGAN'
-            else:
-                self.loss_function = 'WGGP'
-
-        if not self.learning_rate:
-            if self.loss_function == 'SGAN':
-                self.learning_rate = 1e-3
-            elif self.loss_function == 'WGAN':
-                self.learning_rate = 2e-4
-            elif self.loss_function == 'WGGP':
-                self.learning_rate = 1e-4
+        self.default_parameter_values(data, continuous_columns)
 
         # Create the folders used to save the checkpoints of the model
         if not os.path.exists(self.output):
@@ -288,10 +276,10 @@ class DATGAN:
             print("Start training DATGAN with the {} loss ({}).".format(self.loss_function, dt_string))
 
         self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim,
-                                       self.noise, self.learning_rate, self.num_gen_rnn, self.num_gen_hidden,
-                                       self.num_dis_layers, self.num_dis_hidden, self.label_smoothing,
-                                       self.loss_function, self.var_order, self.n_sources, self.save_checkpoints,
-                                       self.restore_session, self.verbose)
+                                       self.noise, self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
+                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+                                       self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
+                                       self.save_checkpoints, self.restore_session, self.verbose)
 
         # Fit the model
         self.synthesizer.fit(self.encoded_data.data, self.num_epochs)
@@ -364,11 +352,60 @@ class DATGAN:
         self.var_order, self.n_sources = get_order_variables(dag)
 
         self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim,
-                                       self.noise, self.learning_rate, self.num_gen_rnn, self.num_gen_hidden,
-                                       self.num_dis_layers, self.num_dis_hidden, self.label_smoothing,
-                                       self.loss_function, self.var_order, self.n_sources, self.save_checkpoints,
-                                       self.restore_session, self.verbose)
+                                       self.noise, self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
+                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+                                       self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
+                                       self.save_checkpoints, self.restore_session, self.verbose)
 
         self.synthesizer.initialize()
+
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    """                                              Other functions                                               """
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+    def default_parameter_values(self, data, continuous_columns):
+        """
+        Define some basic parameters based on the chosen loss function
+
+        Parameters
+        ----------
+        data: pandas.DataFrame
+            Original dataset
+        continuous_columns: list[str]
+            List of the names of the continuous columns
+        """
+
+        # Define the loss function if not defined yet
+        if not self.loss_function:
+            # more categorical columns than continuous
+            if float(len(continuous_columns)) / float(len(data.columns)) < 0.5:
+                self.loss_function = 'WGAN'
+            else:
+                self.loss_function = 'WGGP'
+
+        # Define the learning rate
+        if not self.learning_rate:
+            if self.loss_function == 'SGAN':
+                self.learning_rate = 1e-3
+            elif self.loss_function == 'WGAN':
+                self.learning_rate = 2e-4
+            elif self.loss_function == 'WGGP':
+                self.learning_rate = 1e-4
+
+        # Define the g_period
+        if not self.g_period:
+            if self.loss_function == 'SGAN':
+                self.g_period = 1
+            elif self.loss_function == 'WGAN':
+                self.g_period = 2
+            elif self.loss_function == 'WGGP':
+                self.g_period = 4
+
+        # Define the l2 regularization
+        if not self.l2_reg:
+            if self.loss_function == 'SGAN':
+                self.l2_reg = True
+            else:
+                self.l2_reg = False
 
 

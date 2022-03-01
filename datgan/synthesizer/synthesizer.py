@@ -26,9 +26,9 @@ class Synthesizer:
     Synthesizer for the DATGAN model
     """
 
-    def __init__(self, output, metadata, dag, batch_size, z_dim, noise, learning_rate, num_gen_rnn, num_gen_hidden,
-                 num_dis_layers, num_dis_hidden, label_smoothing, loss_function, var_order, n_sources, save_checkpoints,
-                 restore_session, verbose):
+    def __init__(self, output, metadata, dag, batch_size, z_dim, noise, learning_rate, g_period, l2_reg, num_gen_rnn,
+                 num_gen_hidden, num_dis_layers, num_dis_hidden, label_smoothing, loss_function, var_order, n_sources,
+                 save_checkpoints, restore_session, verbose):
         """
         Constructs all the necessary attributes for the DATGANSynthesizer class.
         Parameters
@@ -48,6 +48,10 @@ class Synthesizer:
             set to 'TS' or 'OS') Defined in the DATGAN class.
         learning_rate: float
             Learning rate. Defined in the DATGAN class.
+        g_period: int
+            Every "g_period" steps, train the generator once. (Used to train the discriminator more than the generator)
+        l2_reg: bool
+            Tell the model to use L2 regularization while training both NNs.
         num_gen_rnn: int
             Size of the hidden units in the LSTM cell. Defined in the DATGAN class.
         num_gen_hidden: int
@@ -80,6 +84,8 @@ class Synthesizer:
         self.z_dim = z_dim
         self.noise = noise
         self.learning_rate = learning_rate
+        self.g_period = g_period
+        self.l2_reg = l2_reg
         self.num_gen_rnn = num_gen_rnn
         self.num_gen_hidden = num_gen_hidden
         self.num_dis_layers = num_dis_layers
@@ -104,7 +110,6 @@ class Synthesizer:
         self.optimizerD = None
         self.optimizerG = None
         self.loss = None
-        self.g_period = None
         self.data = None
         self.logging = {}
 
@@ -141,8 +146,9 @@ class Synthesizer:
         # Keep track of all the iterations for the WGAN and WGGP loss
         iter_ = 0
 
-        # Prepare the logs
-        self.loss.prepare_logs(self.logging)
+        # Prepare the logs if the dict is empty
+        if not self.logging:
+            self.loss.prepare_logs(self.logging)
 
         for epoch in iterable_epochs:
 
@@ -164,8 +170,6 @@ class Synthesizer:
                 # Reset the logs in the class for the loss function
                 self.loss.reset_logs()
 
-                #logs = self.do_step(transformed_batch, iter_)
-
                 # Train one step of the discriminator
                 discr_logs = self.train_step_discr(transformed_batch)
 
@@ -181,6 +185,9 @@ class Synthesizer:
 
                 for nn in logs.keys():
                     for k in logs[nn].keys():
+                        if not self.l2_reg and k == 'reg_loss':
+                            pass
+
                         tmp_logs[nn][k].append(logs[nn][k].numpy())
 
                 # Update the iterations
@@ -250,9 +257,9 @@ class Synthesizer:
 
         # Load the generator and the discriminator
         self.generator = Generator(self.metadata, self.dag, self.batch_size, self.z_dim, self.num_gen_rnn,
-                                   self.num_gen_hidden, self.var_order, self.loss_function, self.verbose)
+                                   self.num_gen_hidden, self.var_order, self.loss_function, self.l2_reg, self.verbose)
 
-        self.discriminator = Discriminator(self.num_dis_layers, self.num_dis_hidden, self.loss_function)
+        self.discriminator = Discriminator(self.num_dis_layers, self.num_dis_hidden, self.loss_function, self.l2_reg)
 
         # Get the optimizer depending on the loss function
         if self.loss_function == 'SGAN':
@@ -261,7 +268,6 @@ class Synthesizer:
             self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.5, beta_2=0.9)
 
             # Loss function
-            self.g_period = 1
             self.loss = SGANLoss(self.metadata, self.var_order)
 
         elif self.loss_function == 'WGAN':
@@ -270,7 +276,6 @@ class Synthesizer:
             self.optimizerD = tf.keras.optimizers.RMSprop(learning_rate=self.learning_rate)
 
             # Loss function
-            self.g_period = 3
             self.loss = WGANLoss(self.metadata, self.var_order)
         elif self.loss_function == 'WGGP':
             # Optimizers
@@ -278,7 +283,6 @@ class Synthesizer:
             self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0, beta_2=0.9)
 
             # Loss function
-            self.g_period = 5
             self.loss = WGGPLoss(self.metadata, self.var_order)
 
         self.checkpoint = tf.train.Checkpoint(epoch=tf.Variable(0),
@@ -293,11 +297,15 @@ class Synthesizer:
         self.restore_models()
 
     def restore_models(self):
+        """
+        Restore the models from the checkpoint
+        """
         if self.restore_session:
             # Restore the models
             self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
-            if self.checkpoint_manager.latest_checkpoint and self.verbose > 0:
-                print("Restored models from epoch {:d}.".format(int(self.checkpoint.epoch.numpy())))
+            if self.checkpoint_manager.latest_checkpoint:
+                if self.verbose > 0:
+                    print("Restored models from epoch {:d}.".format(int(self.checkpoint.epoch.numpy())))
 
                 # Reload the logs
                 with open(os.path.join(self.output, 'logging.json'), 'r') as infile:

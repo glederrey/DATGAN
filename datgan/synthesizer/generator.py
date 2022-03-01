@@ -18,7 +18,7 @@ class Generator(tf.keras.Model):
     """
 
     def __init__(self, metadata, dag, batch_size, z_dim, num_gen_rnn, num_gen_hidden, var_order, loss_function,
-                 verbose):
+                 l2_reg, verbose):
         """
         Initialize the class
 
@@ -41,6 +41,8 @@ class Generator(tf.keras.Model):
             Ordered list for the variables. Used in the Generator.
         loss_function: str
             Name of the loss function to be used. (Defined in the class DATGAN)
+        l2_reg: bool
+            Use l2 regularization or not
         verbose: int
             Level of verbose
         """
@@ -53,6 +55,7 @@ class Generator(tf.keras.Model):
         self.num_gen_hidden = num_gen_hidden
         self.var_order = var_order
         self.loss_function = loss_function
+        self.l2_reg = l2_reg
         self.verbose = verbose
 
         # Get the number of sources
@@ -68,7 +71,10 @@ class Generator(tf.keras.Model):
             self.n_successors[col] = len(list(self.dag.successors(col)))
 
         # Regularizer
-        self.kern_reg = tf.keras.regularizers.L2(1e-5)
+        if self.l2_reg:
+            self.kern_reg = tf.keras.regularizers.L2(1e-5)
+        else:
+            self.kern_reg = None
 
         # Parameters
         self.zero_inputs = None
