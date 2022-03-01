@@ -279,8 +279,8 @@ class Synthesizer:
             self.loss = WGANLoss(self.metadata, self.var_order)
         elif self.loss_function == 'WGGP':
             # Optimizers
-            self.optimizerG = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0, beta_2=0.9)
-            self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0, beta_2=0.9)
+            self.optimizerG = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.0, beta_2=0.9)
+            self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.0, beta_2=0.9)
 
             # Loss function
             self.loss = WGGPLoss(self.metadata, self.var_order)

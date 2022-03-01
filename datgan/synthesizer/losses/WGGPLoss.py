@@ -25,7 +25,7 @@ class WGGPLoss(GANLoss):
         """
         super().__init__(metadata, var_order, name=name)
 
-        self.lambda_ = tf.Variable(10.0, dtype=tf.float32)
+        self.lambda_ = tf.constant(10.0, dtype=tf.float32)
 
     def gen_loss(self, synth_output, transformed_orig, transformed_synth, l2_reg):
         """
@@ -87,7 +87,7 @@ class WGGPLoss(GANLoss):
 
         # the gradient penalty loss
         interp_grad_norm = tf.sqrt(tf.reduce_sum(tf.square(interp_grad), axis=[1]))
-        grad_pen = self.lambda_ * tf.reduce_mean((interp_grad_norm - 1.0) ** 2)
+        grad_pen = tf.multiply(self.lambda_, tf.reduce_mean((interp_grad_norm - 1.0) ** 2))
 
         # Full loss
         loss = fake_loss - real_loss + grad_pen + l2_reg

@@ -397,7 +397,7 @@ class DATGAN:
             if self.loss_function == 'SGAN':
                 self.g_period = 1
             elif self.loss_function == 'WGAN':
-                self.g_period = 3
+                self.g_period = 2
             elif self.loss_function == 'WGGP':
                 self.g_period = 5
 

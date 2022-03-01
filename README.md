@@ -9,7 +9,7 @@ Directed Acyclic Tabular GAN (**DATGAN**) for integrating expert knowledge in sy
 - Development Status: [Alpha](https://pypi.org/search/?q=&o=&c=Development+Status+%3A%3A+3+-+Alpha)
 - Homepage: https://github.com/glederrey/DATGAN
 
-> The preprint of the article for this model will be available on arXiv by the end of February/early March.
+> **The preprint of the article for this model should be available on arXiv by mid-March.**
 
 ## Overview
 
@@ -153,7 +153,7 @@ Once you have a **DATGAN** instance, you can call the method `fit` and passing t
 - `data`: the original DataFrame
 - `graph`: the `networkx` DAG
 - `continuous_columns`: the list of continuous columns
-- `preprocessed_data_path`: the path to the preprocessed data if done in Step 4.
+- `preprocessed_data_path`: the path to the preprocessed data if done in Step 4 or the path where to save them.
 ```python
 datgan.fit(df, graph, continuous_columns, preprocessed_data_path='./encoded_data')
 ```
