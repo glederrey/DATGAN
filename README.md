@@ -24,7 +24,7 @@ Tensorflow 2. We, thus, recommend the user to set up a [virtualenv](https://virt
 
 ## Installation
 
-We provide a [complete installation guide](https://github.com/glederrey/DATGAN/blob/main/INSTALL.md) 
+We provide a [complete installation guide](https://github.com/glederrey/DATGAN/blob/master/INSTALL.md) 
 using conda and setting up a virtualenv. Please follow this guide to properly set up everything and make sure that you 
 can use the DATGAN as intended.
 
