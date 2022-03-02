@@ -49,8 +49,8 @@ The output of the **DATGAN** is a table of synthetic data with the same columns 
 requested.
 
 # Tutorial
-In this short tutorial we will guide you through a series of steps that will help you getting
-started with the most basic usage of **DATGAN** in order to generate samples from a given dataset.
+In this short tutorial we will guide you through a series of steps that will help you to get started with the most basic 
+usage of **DATGAN** in order to generate samples from a given dataset.
 
 **NOTE**: The following examples are also covered in a [Jupyter](https://jupyter.org/) notebook,
 which you can execute by running the following commands inside your *virtualenv*:
@@ -76,7 +76,14 @@ continuous_columns = ["distance", "age", "departure_time"]
 ### 2. Create a DAG
 
 The second steps consists in creating the DAG for the DATGAN. The DAG is created using the library `networkx` from 
-Python. *If you just want to test the model without any specific DAG, we recommend you to use a linear DAG.*
+Python. The only constraint while creating the DAG is that it should not contain any cycle (by definition). In the article,
+we give more details how to create the DAG. However, this process can still be cumbersome and requires trials and errors to
+obtain a good DAG.
+
+If you do not have any idea how to create your DAG, it is possible to not provide any DAG to the model. However, in 
+this case, the model will define a _linear_ DAG, _i.e._ each variable in the dataset is linked to the next one following
+the order of the columns. It can be useful to quickly test the model. However, it will reduce the performance of the 
+model as shown in the article.
 
 Example of a DAG for the CMAP dataset:
 ```python
@@ -112,16 +119,11 @@ graph.add_edges_from([
 ])
 ```
 
-If you do not have any idea how to create your DAG, it is possible to not provide any DAG to the model. However, in 
-this case, the model will define a _linear_ DAG, _i.e._ each variable in the dataset is linked to the next one following
-the order of the columns. It can be useful to quickly test the model. However, it will reduce the performance of the 
-model as shown in the article.
-
 ### 3. Create a DATGAN instance
 
 The next step is to import **DATGAN** and create an instance of the model. There are no required parameters for the 
 model. However, we advise you to set up the basic parameters such as the output folder (`output`), batch size 
-(`batch_size`), and verbose level (`verbose`).
+(`batch_size`), and the number of epochs (`num_epochs`). 
 
 ```python
 output_folder = './output/'
@@ -129,7 +131,7 @@ batch_size = 558
 
 from datgan import DATGAN
 
-datgan = DATGAN(output=output_folder, batch_size=batch_size, verbose=1)
+datgan = DATGAN(output=output_folder, batch_size=batch_size, num_epochs=1000)
 ```
 
 **NOTE**: Setting up a suitable batch size is really important. A batch size too big will make the model crash due to 
@@ -243,6 +245,14 @@ test these other configurations, but it will lead to worse results. However, for
 rules whether to apply it or not. Therefore, it might be interesting to test this parameter as well.
 - `learning_rate` It has been fixed depending on the loss function. However, as for any optimization problem, playing 
 with the learning rate to find the optimal value is always important.
+
+# Future steps
+
+We are currently working on a version of the DATGAN that will include conditionality. This repository as well as the 
+Pypi library will be updated once this is done.
+
+In the meantime, if you want to participate in the development of this model, you can write a Github issue and give us 
+your suggestions or directly prepare a Pull Request. (However, it would be better to first discuss the content of the PR.)
 
 # Acknowledgements
 
