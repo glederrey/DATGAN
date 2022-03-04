@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import matplotlib.pyplot as plt
+from pynverse import inversefunc
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.exceptions import ConvergenceWarning
@@ -30,63 +31,34 @@ class EncodedDataset:
     Original class from TGAN.
     """
 
-    def __init__(self, data, continuous_columns, verbose):
+    def __init__(self, data, metadata, verbose):
         """Initialize object.
 
         Parameters
         ----------
         data: pandas.DataFrame
             Original dataset
-        continuous_columns: list[str]
-            List of names of the continuous variables
+        metadata: dict
+            Dictionary containing information about the data in the dataframe
         verbose: int
             Level of verbose.
         """
         self.original_data = data
         self.data = None
 
-        if continuous_columns is None:
-            continuous_columns = []
+        if metadata is None:
+            raise ValueError("You need to provide the info about the data when you are preprocessing the data for the "
+                             "first time.")
 
-        self.continuous_columns = continuous_columns
+        self.metadata = {'details': metadata}
         self.columns = None
 
-        self.metadata = None
         self.continuous_transformer = MultiModalNumberTransformer(verbose)
         self.categorical_transformer = LabelEncoder()
         self.columns = None
         self.categorical_argmax = None
 
         self.verbose = verbose
-
-    def __len__(self):
-        """
-        Length of the dataset
-
-        Returns
-        -------
-        int:
-            Length of the original dataset
-        """
-
-        return len(self.original_data)
-
-    def __getitem__(self, idx):
-        """
-        Get an item from the dataset
-
-        Parameters
-        ----------
-        idx: int
-            Index
-
-        Returns
-        -------
-        pandas.DataFrame
-            The corresponding DataFrame with the given indices
-        """
-
-        return {k: self.data[k][idx] for k in self.data.keys()}
 
     def set_sampling_technique(self, sampling):
         """
@@ -114,27 +86,32 @@ class EncodedDataset:
         num_cols = self.original_data.shape[1]
 
         self.data = {}
-        details = {}
 
         self.columns = self.original_data.columns
 
         for col in self.columns:
-            if col in self.continuous_columns:
-                if self.verbose > 1:
+
+            col_details = self.metadata['details'][col]
+
+            if col_details['type'] == 'continuous':
+                if self.verbose > 0:
                     print("Encoding continuous variable \"{}\"...".format(col))
 
                 column_data = self.original_data[col].values.reshape([-1, 1])
+                # If there's a function to be applied on the data, we do it before the encoding
+                if 'apply_func' in col_details:
+                    column_data = col_details['apply_func'](column_data)
+                    self.metadata['details'][col]['apply_inv_func'] = inversefunc(col_details['apply_func'],
+                                                                                  accuracy=0)
+
                 features, probs, model, n_modes = self.continuous_transformer.transform(column_data)
                 self.data[col] = tf.convert_to_tensor(np.concatenate((features, probs), axis=1), dtype=tf.float32)
 
                 if fitting:
-                    details[col] = {
-                        "type": "continuous",
-                        "n": n_modes,
-                        "transform": model,
-                    }
+                    self.metadata['details'][col]["n"] = n_modes
+                    self.metadata['details'][col]["transform"] = model
             else:
-                if self.verbose > 1:
+                if self.verbose > 0:
                     print("Encoding categorical variable \"{}\"...".format(col))
 
                 column_data = self.original_data[col].astype(str).values
@@ -143,20 +120,13 @@ class EncodedDataset:
 
                 if fitting:
                     mapping = self.categorical_transformer.classes_
-                    details[col] = {
-                        "type": "category",
-                        "mapping": mapping,
-                        "n": mapping.shape[0],
-                    }
+                    self.metadata['details'][col]["n"] = mapping.shape[0]
+                    self.metadata['details'][col]["mapping"] = mapping
 
         if fitting:
-            metadata = {
-                "num_features": num_cols,
-                "details": details,
-                "len": len(self.original_data)
-            }
-            check_metadata(metadata)
-            self.metadata = metadata
+            self.metadata["num_features"] = num_cols
+            self.metadata["len"] = len(self.original_data)
+            check_metadata(self.metadata)
 
     def transform(self, data):
         """
@@ -208,7 +178,11 @@ class EncodedDataset:
             if column_metadata['type'] == 'continuous':
                 column = self.continuous_transformer.inverse_transform(column_data, column_metadata)
 
-            if column_metadata['type'] == 'category':
+                # If we applied a function before encoding the data, we need to apply its inverse here
+                if 'apply_inv_func' in column_metadata:
+                    column = column_metadata['apply_inv_func'](column)
+
+            if column_metadata['type'] == 'categorical':
                 self.categorical_transformer.classes_ = column_metadata['mapping']
 
                 selected_component = select_values(column_data, argmax=self.categorical_argmax)
@@ -238,31 +212,34 @@ class EncodedDataset:
         if not os.path.exists(path):
             os.makedirs(path)
 
-        for col in self.continuous_columns:
+        for col in self.metadata['details'].keys():
 
             details = self.metadata['details'][col]
 
-            gmm = details['transform']
+            if details['type'] == 'continuous':
+                gmm = details['transform']
 
-            tmp = data[col]
+                tmp = data[col]
+                if 'apply_func' in details:
+                    tmp = details['apply_func'](tmp)
 
-            fig = plt.figure(figsize=(10, 7))
-            plt.hist(tmp, 50, density=True, histtype='stepfilled', alpha=0.4, color='gray')
+                fig = plt.figure(figsize=(10, 7))
+                plt.hist(tmp, 50, density=True, histtype='stepfilled', alpha=0.4, color='gray')
 
-            x = np.linspace(np.min(tmp), np.max(tmp), 1000)
+                x = np.linspace(np.min(tmp), np.max(tmp), 1000)
 
-            logprob = gmm.score_samples(x.reshape(-1, 1))
-            responsibilities = gmm.predict_proba(x.reshape(-1, 1))
-            pdf = np.exp(logprob)
-            pdf_individual = responsibilities * pdf[:, np.newaxis]
-            plt.plot(x, pdf, '-k')
-            plt.plot(x, pdf_individual, '--k')
+                logprob = gmm.score_samples(x.reshape(-1, 1))
+                responsibilities = gmm.predict_proba(x.reshape(-1, 1))
+                pdf = np.exp(logprob)
+                pdf_individual = responsibilities * pdf[:, np.newaxis]
+                plt.plot(x, pdf, '-k')
+                plt.plot(x, pdf_individual, '--k')
 
-            plt.xlabel('$x$')
-            plt.ylabel('$p(x)$')
-            plt.title("{} - {} mixtures".format(col, details['n']))
-            plt.savefig(path + '/{}.png'.format(col), bbox_inches='tight', facecolor='white')
-            plt.close(fig)
+                plt.xlabel('$x$')
+                plt.ylabel('$p(x)$')
+                plt.title("{} - {} mixtures".format(col, details['n']))
+                plt.savefig(path + '/{}.png'.format(col), bbox_inches='tight', facecolor='white')
+                plt.close(fig)
 
 
 class MultiModalNumberTransformer:
@@ -420,7 +397,7 @@ def check_metadata(metadata):
 
     """
     message = 'The given metadata contains unsupported types.'
-    assert all([metadata['details'][col]['type'] in ['category', 'continuous']
+    assert all([metadata['details'][col]['type'] in ['categorical', 'continuous']
                 for col in metadata['details'].keys()]), message
 
 

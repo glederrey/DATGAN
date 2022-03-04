@@ -205,7 +205,7 @@ class Generator(tf.keras.Model):
                                                                  kernel_regularizer=self.kern_reg,
                                                                  name='output_cont_prob_{}'.format(col))
 
-            elif col_info['type'] == 'category':
+            elif col_info['type'] == 'categorical':
                 self.output_layers[col] = layers.Dense(col_info['n'],
                                                        activation='softmax',
                                                        kernel_regularizer=self.kern_reg,
@@ -408,12 +408,12 @@ class Generator(tf.keras.Model):
             w = tf.concat([w_val, w_prob], axis=1)
 
         # For cat. var, we only need the probability
-        elif col_info['type'] == 'category':
+        elif col_info['type'] == 'categorical':
             w = self.output_layers[col](hidden)
 
         else:
             raise ValueError(
-                "self.metadata['details'][{}]['type'] must be either `category` or "
+                "self.metadata['details'][{}]['type'] must be either `categorical` or "
                 "`continuous`. Instead it was {}.".format(col, col_info['type'])
             )
 

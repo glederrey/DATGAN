@@ -420,7 +420,7 @@ class Synthesizer:
             # Get info
             col_info = self.metadata['details'][col]
 
-            if col_info['type'] == 'category':
+            if col_info['type'] == 'categorical':
 
                 # Synthetic data
                 val = dict_[col]

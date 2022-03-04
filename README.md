@@ -60,18 +60,51 @@ pip install jupyter
 jupyter notebook example/training.ipynb
 ```
 
-### 1. Load the data
+### 1. Load the data and provide info about it
 
 The first step is to load the data wich we will use to fit the **DATGAN**. In the example, we provide a demo dataset, 
-the **CMAP** dataset. You can load it using `pandas`. We also need to define which columns are considered continuous. 
-For this, we simply define a list of `str` with the name of the variables that we consider as continuous.
+the **CMAP** dataset. You can load it using `pandas`. We also need to provide the type of data for each columns. For the 
+moment, only two possibilities are implemented: `continuous` and `categorical`. For `continuous` columns, you can pass 
+more information to the model such as:
+- `bounds` [**mandatory**]: Values of the bounds. While sampling synthetic data, all values outside of the bounds will be discarded.
+- `discrete` [**mandatory**]: Boolean value to indicate if the synthetic value has to be rounded when sampling
+- `apply_func` [**optional**]: You can provide a lambda function that will be applied before the encoding step and when sampling
+the final values. This can help to train models on distributions that are more difficult to be represented by GMMs, 
+*e.g.* exponential distributions.
 ```python
 import pandas as pd
+import numpy as np
 
 df = pd.read_csv('./data/CMAP.csv', index_col=False)
 
-continuous_columns = ["distance", "age", "departure_time"]
+data_info = {
+    'distance': {
+        'type': 'continuous',
+        'bounds': [0.0, np.infty],
+        'discrete': False,
+        'apply_func': (lambda x: np.log10(x+1e-3)),
+    },
+    'age': {
+        'type': 'continuous',
+        'bounds': [0, 100],
+        'discrete': True
+    },
+    'departure_time': {
+        'type': 'continuous',
+        'bounds': [0, 23.999],
+        'discrete': False
+    }
+}
+
+# For the categorical columns, we can simply add them using a for loop
+for c in df.columns:
+    if c not in data_info.keys():
+        data_info[c] = {'type': 'categorical'}
 ```
+
+> **WARNING:** While using a lambda function in the  `apply_func` parameters, we are using the `pynverse` library to compute 
+> the inverse of the given function. Therefore, with more complex functions, it is possible to get Warnings while sampling 
+> the final synthetic data. This is a normal behaviour when `pynverse` is having trouble computing the inverse of some values.
 
 ### 2. Create a DAG
 
@@ -147,7 +180,7 @@ you want to try multiple parameters with the **DATGAN**, you do not have to prep
 it is possible to do it before fitting the model and saving it somewhere. 
 
 ```python
-datgan.preprocess(df, continuous_columns, preprocessed_data_path='./encoded_data')
+datgan.preprocess(df, data_info, preprocessed_data_path='./encoded_data')
 ```
 
 ### 5. Fit the model
@@ -157,7 +190,7 @@ Once you have a **DATGAN** instance, you can call the method `fit` and passing t
 - `continuous_columns`: the list of continuous columns
 - `preprocessed_data_path`: the path to the preprocessed data if done in Step 4 or the path where to save them.
 ```python
-datgan.fit(df, graph, continuous_columns, preprocessed_data_path='./encoded_data')
+datgan.fit(df, graph, data_info, preprocessed_data_path='./encoded_data')
 ```
 
 ### 6. Sample new data
@@ -165,11 +198,8 @@ Once the model has been fitted, you can generate new synthetic data by calling t
 provide the desired number of samples.
 ```python
 samples = datgan.sample(len(df))
-samples.age = np.round(samples.age)
 samples.to_csv('./data/CMAP_synthetic.csv', index=False)
 ```
-In this case, the column `age` is a discrete distribution. The **DATGAN** cannot provide such data type for the moment, 
-we, thus, advise you to treat such column as continuous and, then, round the values.
 
 ### 7. Save and load a model
 
@@ -183,7 +213,7 @@ In order to save memory, we only save the parameters of the Generator and Discri
 required to load the model.
 
 ```python
-new_datgan = datgan.load(df, graph, continuous_columns, preprocessed_data_path='./encoded_data')
+new_datgan = datgan.load(df, graph, preprocessed_data_path='./encoded_data')
 ```
 
 At this point we can use this model instance to generate more samples.
@@ -246,7 +276,7 @@ rules whether to apply it or not. Therefore, it might be interesting to test thi
 - `learning_rate` It has been fixed depending on the loss function. However, as for any optimization problem, playing 
 with the learning rate to find the optimal value is always important.
 
-# Future steps
+# Future steps & Contributing
 
 We are currently working on a version of the DATGAN that will include conditionality. This repository as well as the 
 Pypi library will be updated once this is done.

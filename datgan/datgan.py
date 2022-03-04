@@ -3,7 +3,9 @@
 
 import os
 import time
-import pickle
+import dill
+import numpy as np
+import pandas as pd
 import tensorflow as tf
 from datetime import datetime
 
@@ -156,25 +158,25 @@ class DATGAN:
     """                                           Preprocessing the data                                           """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def preprocess(self, data, continuous_columns, preprocessed_data_path=None):
+    def preprocess(self, data, metadata, preprocessed_data_path=None):
         """
         Preprocess the original data to transform it into a usable dataset.
 
         Parameters
         ----------
-            data: pandas.DataFrame
-                Original dataset
-            continuous_columns: list[str]
-                List of the names of the continuous columns
-            preprocessed_data_path: str, default None
-                Path to an existing preprocessor. If None is given, the model will preprocess the data and save it under
-                self.output + '/encoded_data'.
+        data: pandas.DataFrame
+            Original dataset
+        metadata: dict
+            Dictionary containing information about the data in the dataframe
+        preprocessed_data_path: str, default None
+            Path to an existing preprocessor. If None is given, the model will preprocess the data and save it under
+            self.output + '/encoded_data'.
 
         Raises
         ------
-            FileNotFoundError
-                If the files 'preprocessed_data.pkl' and 'preprocessor.pkl' are not in the folder given in the variable
-                preprocessed_data_path
+        FileNotFoundError
+            If the files 'preprocessed_data.pkl' and 'preprocessor.pkl' are not in the folder given in the variable
+            preprocessed_data_path
 
         Returns
         -------
@@ -195,7 +197,7 @@ class DATGAN:
 
             # Load the preprocessor and the preprocessed data
             with open(os.path.join(self.data_dir, 'encoded_data.pkl'), 'rb') as f:
-                self.encoded_data = pickle.load(f)
+                self.encoded_data = dill.load(f)
 
             if self.verbose > 0:
                 print("Preprocessed data have been loaded!")
@@ -204,12 +206,12 @@ class DATGAN:
                 print("Preprocessing the data!")
 
             # Preprocess the original data
-            self.encoded_data = EncodedDataset(data, continuous_columns, self.verbose)
+            self.encoded_data = EncodedDataset(data, metadata, self.verbose)
             self.encoded_data.fit_transform(fitting=True)
 
             # Save them both
             with open(os.path.join(self.data_dir, 'encoded_data.pkl'), 'wb') as f:
-                pickle.dump(self.encoded_data, f)
+                dill.dump(self.encoded_data, f)
 
             # Verification for continuous mixture
             self.encoded_data.plot_continuous_mixtures(data, self.data_dir)
@@ -231,15 +233,15 @@ class DATGAN:
     """                                             Fitting the model                                              """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def fit(self, data, continuous_columns, dag=None, preprocessed_data_path=None):
+    def fit(self, data, metadata=None, dag=None, preprocessed_data_path=None):
         """
         Fit the DATGAN model to the original data and save it once it's finished training.
         Parameters
         ----------
         data: pandas.DataFrame
             Original dataset
-        continuous_columns: list[str]
-            List of the names of the continuous columns
+        metadata: dict, default None
+            Dictionary containing information about the data in the dataframe
         dag: networkx.DiGraph, default None
             Directed Acyclic Graph representing the relations between the variables. If no dag is provided, the
             algorithm will create a linear DAG.
@@ -249,7 +251,7 @@ class DATGAN:
         """
 
         # Preprocess the original data
-        self.preprocess(data, continuous_columns, preprocessed_data_path)
+        self.preprocess(data, metadata, preprocessed_data_path)
         self.metadata = self.encoded_data.metadata
 
         # Verify the integrity of the DAG and get the ordered list of variables for the Generator
@@ -261,7 +263,7 @@ class DATGAN:
         verify_dag(data, dag)
         self.var_order, self.n_sources = get_order_variables(dag)
 
-        self.default_parameter_values(data, continuous_columns)
+        self.default_parameter_values(data)
 
         # Create the folders used to save the checkpoints of the model
         if not os.path.exists(self.output):
@@ -312,17 +314,50 @@ class DATGAN:
             Synthetic dataset of 'num_samples' rows
         """
 
-        samples = self.synthesizer.sample(num_samples)
-
         self.encoded_data.set_sampling_technique(sampling)
 
-        return self.encoded_data.reverse_transform(samples).copy()
+        num_sampled_data = 0
+        final_samples = pd.DataFrame()
+
+        while num_sampled_data <= num_samples:
+
+            encoded_samples = self.synthesizer.sample(self.batch_size)
+
+            decoded_samples = self.encoded_data.reverse_transform(encoded_samples).copy()
+
+            idx_to_keep = np.ones(self.batch_size, dtype=bool)
+
+            for col in self.metadata['details'].keys():
+                col_details = self.metadata['details'][col]
+
+                if col_details['type'] == 'continuous':
+                    # Check if we need to transform in a discrete distribution
+                    if col_details['discrete']:
+                        decoded_samples[col] = np.round(decoded_samples[col])
+
+                    # Check the bounds
+                    idx = (decoded_samples[col] >= col_details['bounds'][0]) & \
+                          (decoded_samples[col] <= col_details['bounds'][1])
+
+                    idx_to_keep *= np.array(idx)
+
+            # Remove the values that are outside of the bounds
+            decoded_samples = decoded_samples[idx_to_keep]
+
+            num_sampled_data += len(decoded_samples)
+
+            final_samples = pd.concat([final_samples, decoded_samples], ignore_index=True)
+
+        # Now the df is too big => we make sure it has the right size
+        final_samples = final_samples.sample(num_samples)
+        final_samples.index = range(len(final_samples))
+        return final_samples
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     """                                              Load the model                                                """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def load(self, data, continuous_columns, dag=None, preprocessed_data_path=None):
+    def load(self, data, dag=None, preprocessed_data_path=None):
         """
         Load the model based on the latest checkpoint
 
@@ -330,8 +365,6 @@ class DATGAN:
         ----------
         data: pandas.DataFrame
             Original dataset
-        continuous_columns: list[str]
-            List of the names of the continuous columns
         dag: networkx.DiGraph, default None
             Directed Acyclic Graph representing the relations between the variables. If no dag is provided, the
             algorithm will create a linear DAG.
@@ -340,7 +373,7 @@ class DATGAN:
             self.output + '/encoded_data'.
         """
         # Preprocess the original data
-        self.preprocess(data, continuous_columns, preprocessed_data_path)
+        self.preprocess(data, None, preprocessed_data_path)
         self.metadata = self.encoded_data.metadata
 
         # Reload the DAG
@@ -363,7 +396,7 @@ class DATGAN:
     """                                              Other functions                                               """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def default_parameter_values(self, data, continuous_columns):
+    def default_parameter_values(self, data):
         """
         Define some basic parameters based on the chosen loss function
 
@@ -371,14 +404,18 @@ class DATGAN:
         ----------
         data: pandas.DataFrame
             Original dataset
-        continuous_columns: list[str]
-            List of the names of the continuous columns
         """
 
         # Define the loss function if not defined yet
         if not self.loss_function:
+
+            nbr_cont_cols = 0
+            for col in self.metadata['details'].keys():
+                if self.metadata['details'][col]['type'] == 'continuous':
+                    nbr_cont_cols += 1
+
             # more categorical columns than continuous
-            if float(len(continuous_columns)) / float(len(data.columns)) < 0.5:
+            if float(nbr_cont_cols) / float(len(data.columns)) < 0.5:
                 self.loss_function = 'WGAN'
             else:
                 self.loss_function = 'WGGP'

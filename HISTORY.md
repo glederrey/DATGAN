@@ -18,3 +18,8 @@
 * Code has been tested against version 1.1.1 to make sure the generated datasets 
 provide the same results on the assessments results.
 * Added some more "customization" options for the training of the models.
+
+## 2.0.1
+
+* 
+* Add a new way to define the data types to better control continuous columns
