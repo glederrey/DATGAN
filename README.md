@@ -9,8 +9,6 @@ Directed Acyclic Tabular GAN (**DATGAN**) for integrating expert knowledge in sy
 - Development Status: [Alpha](https://pypi.org/search/?q=&o=&c=Development+Status+%3A%3A+3+-+Alpha)
 - Homepage: https://github.com/glederrey/DATGAN
 
-> **The preprint of the article for this model should be available on arXiv by mid-March.**
-
 ## Overview
 
 The **DATGAN** is a synthesizer for tabular data. It uses LSTM cells to generate synthetic data for continuous and 
@@ -290,13 +288,9 @@ We would like to thank the authors of the **TGAN** article, Lei Xu and Kalyan Ve
 contributors of the TGAN Github repository. This model has greatly inspired the ideas behind the **DATGAN** and we have 
 used their code as a starting point to write our model. 
 
-# Citing DATGAN
+# Citation
 
-If you use DATGAN or its evaluation metrics, please cite the following work:
-
-> Gael Lederrey, Tim Hillel, Michel Bierlaire. 2022. *DATGAN: Integrating expert knowledge into deep learning for 
-> synthetic tabular data*. ArXiv preprint
-
-**FULL CITATION COMING SOON!**
+If you use DATGAN or its evaluation metrics for any of your projects, please cite the following work:
+> "[Lederrey G., Hillel T., Bierlaire M., *DATGAN: Integrating Expert Knowledge into Deep Learning for Synthetic Tabular Data*, arXiv preprint arXiv:2203.03489 (2022)](https://arxiv.org/abs/2203.03489)"
 
 The original code for this article can be found in this Github repository: https://github.com/glederrey/SynthPop.
