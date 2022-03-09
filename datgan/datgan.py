@@ -39,64 +39,66 @@ class DATGAN:
     """
 
     def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=None, num_epochs=100,
-                 batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, g_period=None,
-                 l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100,
-                 noise=0.2, verbose=1):
+                 batch_size=500, conditionality=True, save_checkpoints=True, restore_session=True, learning_rate=None,
+                 g_period=None, l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1,
+                 num_dis_hidden=100, noise=0.2, verbose=1):
         """
         Constructs all the necessary attributes for the DATGAN class.
 
         Parameters
         ----------
-            loss_function: str, default None
-                Name of the loss function to be used. If not specified, it will choose between 'WGAN' and 'WGGP'
-                depending on the ratio of continuous and categorical columns. Only accepts the values 'SGAN', 'WGAN',
-                and 'WGGP'.
-            label_smoothing: str, default 'TS'
-                Type of label smoothing. Only accepts the values 'TS', 'OS', and 'NO'.
-            output: str, default 'output'
-                Path to store the model and its artifacts.
-            gpu: int, default None
-                Model will automatically try to use GPU if tensorflow can use CUDA. However, this parameter allows you
-                to choose which GPU you want to use.
-            num_epochs: int, default 100
-                Number of epochs to use during training.
-            batch_size: int, default 500
-                Size of the batch to feed the model at each step.
-            save_checkpoints: bool, default True
-                Whether to store checkpoints of the model after each training epoch.
-            restore_session: bool, default True
-                Whether continue training from the last checkpoint.
-            learning_rate: float, default None
-                Learning rate. If set to None, the value will be set according to the chosen loss function.
-            g_period: int, default None
-                Every "g_period" steps, train the generator once. (Used to train the discriminator more than the
-                generator) By default, it will choose values according the chosen loss function.
-            l2_reg: bool, default None
-                Tell the model to use L2 regularization while training both NNs. By default, it applies the L2
-                regularization when using the SGAN loss function.
-            z_dim: int, default 200
-                Dimension of the noise vector used as an input to the generator.
-            num_gen_rnn: int, default 100
-                Size of the hidden units in the LSTM cell.
-            num_gen_hidden: int, default 50
-                Size of the hidden layer used on the output of the generator to act as a convolution.
-            num_dis_layers: int, default 1
-                Number of layers for the discriminator.
-            num_dis_hidden: int, default 100
-                Size of the hidden layers in the discriminator.
-            noise: float, default 0.2
-                Upper bound to the gaussian noise added to with the label smoothing. (only used if label_smoothing is
-                set to 'TS' or 'OS')
-            verbose: int, default 0
-                Level of verbose. 0 means nothing, 1 means that some details will be printed, 2 is mostly used for
-                debugging purpose.
+        loss_function: str, default None
+            Name of the loss function to be used. If not specified, it will choose between 'WGAN' and 'WGGP'
+            depending on the ratio of continuous and categorical columns. Only accepts the values 'SGAN', 'WGAN',
+            and 'WGGP'.
+        label_smoothing: str, default 'TS'
+            Type of label smoothing. Only accepts the values 'TS', 'OS', and 'NO'.
+        output: str, default 'output'
+            Path to store the model and its artifacts.
+        gpu: int, default None
+            Model will automatically try to use GPU if tensorflow can use CUDA. However, this parameter allows you
+            to choose which GPU you want to use.
+        num_epochs: int, default 100
+            Number of epochs to use during training.
+        batch_size: int, default 500
+            Size of the batch to feed the model at each step.
+        conditionality: bool, default False
+            Whether to use conditionality for the DATGAN or not
+        save_checkpoints: bool, default True
+            Whether to store checkpoints of the model after each training epoch.
+        restore_session: bool, default True
+            Whether continue training from the last checkpoint.
+        learning_rate: float, default None
+            Learning rate. If set to None, the value will be set according to the chosen loss function.
+        g_period: int, default None
+            Every "g_period" steps, train the generator once. (Used to train the discriminator more than the
+            generator) By default, it will choose values according the chosen loss function.
+        l2_reg: bool, default None
+            Tell the model to use L2 regularization while training both NNs. By default, it applies the L2
+            regularization when using the SGAN loss function.
+        z_dim: int, default 200
+            Dimension of the noise vector used as an input to the generator.
+        num_gen_rnn: int, default 100
+            Size of the hidden units in the LSTM cell.
+        num_gen_hidden: int, default 50
+            Size of the hidden layer used on the output of the generator to act as a convolution.
+        num_dis_layers: int, default 1
+            Number of layers for the discriminator.
+        num_dis_hidden: int, default 100
+            Size of the hidden layers in the discriminator.
+        noise: float, default 0.2
+            Upper bound to the gaussian noise added to with the label smoothing. (only used if label_smoothing is
+            set to 'TS' or 'OS')
+        verbose: int, default 0
+            Level of verbose. 0 means nothing, 1 means that some details will be printed, 2 is mostly used for
+            debugging purpose.
 
             Raises
             ------
-                ValueError
-                    If the parameter loss_function is not correctly defined.
-                ValueError
-                    If the parameter label_smoothing is not correctly defined.
+            ValueError
+                If the parameter loss_function is not correctly defined.
+            ValueError
+                If the parameter label_smoothing is not correctly defined.
         """
 
         self.output = output
@@ -117,6 +119,7 @@ class DATGAN:
         self.batch_size = batch_size
         self.z_dim = z_dim
         self.noise = noise
+        self.conditionality = conditionality
         self.learning_rate = learning_rate
         self.g_period = g_period
         self.l2_reg = l2_reg
@@ -206,8 +209,8 @@ class DATGAN:
                 print("Preprocessing the data!")
 
             # Preprocess the original data
-            self.encoded_data = EncodedDataset(data, metadata, self.verbose)
-            self.encoded_data.fit_transform(fitting=True)
+            self.encoded_data = EncodedDataset(data, metadata, self.conditionality, self.verbose)
+            self.encoded_data.fit_transform()
 
             # Save them both
             with open(os.path.join(self.data_dir, 'encoded_data.pkl'), 'wb') as f:
@@ -277,9 +280,9 @@ class DATGAN:
             dt_string = start.strftime("%d/%m/%Y %H:%M:%S")
             print("Start training DATGAN with the {} loss ({}).".format(self.loss_function, dt_string))
 
-        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim,
-                                       self.noise, self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
-                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.conditionality,
+                                       self.z_dim, self.noise, self.learning_rate, self.g_period, self.l2_reg,
+                                       self.num_gen_rnn, self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
                                        self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
                                        self.save_checkpoints, self.restore_session, self.verbose)
 
@@ -299,14 +302,16 @@ class DATGAN:
     """                                                  Sampling                                                  """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def sample(self, num_samples, sampling='SS'):
+    def sample(self, num_samples, cond_dict=None, sampling='SS'):
         """
         Create a DataFrame with the synthetic generate data
         Parameters
         ----------
         num_samples: int
             Number of sample to provide
-        sampling: str
+        cond_dict: dict, default None
+            Conditional dictionary. Only used if the DATGAN model was initialized and trained with conditionality.
+        sampling: str, default 'SS'
             Type of sampling to use. Only accepts the following values: 'SS', 'SA', 'AS', and 'AA'
         Returns
         -------
@@ -319,9 +324,42 @@ class DATGAN:
         num_sampled_data = 0
         final_samples = pd.DataFrame()
 
+        # Prepare the cond vector
+        cond = np.zeros([self.batch_size, 0])
+
+        if self.conditionality:
+            # Go through all variables to fill the conditional tensor
+            for col in self.var_order:
+                col_details = self.metadata['details'][col]
+
+                # Start with 0s
+                tmp = np.zeros([self.batch_size, col_details['n_cat']])
+
+                # The current column is present in the dictionary for conditionals
+                if col in cond_dict.keys():
+
+                    # Make sure the type is of list, or transform it
+                    if isinstance(cond_dict[col], list):
+                        list_conds = cond_dict[col]
+                    else:
+                        list_conds = [cond_dict[col]]
+
+                    # Add 1 where we want to use the conditionality
+                    for i in list_conds:
+                        try:
+                            idx = np.where(col_details['mapping'] == str(i))[0][0]
+                            tmp[:, idx] = 1
+                        except IndexError:
+                            raise ValueError("The condition {} does not exist in the existing categories ({})!"
+                                             .format(i, ", ".join(col_details['mapping'])))
+
+                cond = np.concatenate([cond, tmp], axis=1)
+
+        cond = tf.convert_to_tensor(cond, dtype=tf.float32)
+
         while num_sampled_data <= num_samples:
 
-            encoded_samples = self.synthesizer.sample(self.batch_size)
+            encoded_samples = self.synthesizer.sample(self.batch_size, cond)
 
             decoded_samples = self.encoded_data.reverse_transform(encoded_samples).copy()
 
@@ -336,10 +374,11 @@ class DATGAN:
                         decoded_samples[col] = np.round(decoded_samples[col])
 
                     # Check the bounds
-                    idx = (decoded_samples[col] >= col_details['bounds'][0]) & \
-                          (decoded_samples[col] <= col_details['bounds'][1])
+                    if 'bounds' in col_details.keys():
+                        idx = (decoded_samples[col] >= col_details['bounds'][0]) & \
+                              (decoded_samples[col] <= col_details['bounds'][1])
 
-                    idx_to_keep *= np.array(idx)
+                        idx_to_keep *= np.array(idx)
 
             # Remove the values that are outside of the bounds
             decoded_samples = decoded_samples[idx_to_keep]
@@ -384,9 +423,9 @@ class DATGAN:
 
         self.var_order, self.n_sources = get_order_variables(dag)
 
-        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim,
-                                       self.noise, self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
-                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.conditionality,
+                                       self.z_dim, self.noise, self.learning_rate, self.g_period, self.l2_reg,
+                                       self.num_gen_rnn, self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
                                        self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
                                        self.save_checkpoints, self.restore_session, self.verbose)
 

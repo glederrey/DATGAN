@@ -18,7 +18,7 @@ class Generator(tf.keras.Model):
     """
 
     def __init__(self, metadata, dag, batch_size, z_dim, num_gen_rnn, num_gen_hidden, var_order, loss_function,
-                 l2_reg, verbose):
+                 l2_reg, conditionality, verbose):
         """
         Initialize the class
 
@@ -43,9 +43,12 @@ class Generator(tf.keras.Model):
             Name of the loss function to be used. (Defined in the class DATGAN)
         l2_reg: bool
             Use l2 regularization or not
+        conditionality: bool
+            Whether to use conditionality or not
         verbose: int
             Level of verbose
         """
+
         super().__init__()
         self.metadata = metadata
         self.dag = dag
@@ -56,6 +59,7 @@ class Generator(tf.keras.Model):
         self.var_order = var_order
         self.loss_function = loss_function
         self.l2_reg = l2_reg
+        self.conditionality = conditionality
         self.verbose = verbose
 
         # Get the number of sources
@@ -200,6 +204,7 @@ class Generator(tf.keras.Model):
                                                                 activation='tanh',
                                                                 kernel_regularizer=self.kern_reg,
                                                                 name='output_cont_val_{}'.format(col))
+
                 self.output_layers[col + '_prob'] = layers.Dense(col_info['n'],
                                                                  activation='softmax',
                                                                  kernel_regularizer=self.kern_reg,
@@ -217,7 +222,7 @@ class Generator(tf.keras.Model):
                                                       kernel_regularizer=self.kern_reg,
                                                       name='next_input_{}'.format(col))
 
-    def call(self, z):
+    def call(self, z, cond):
         """
         Build the Generator
 
@@ -225,6 +230,8 @@ class Generator(tf.keras.Model):
         ----------
         z: torch.Tensor
             Noise used as an input for the Generator
+        cond: torch.Tensor
+            Tensor for the conditionality
 
         Returns
         -------
@@ -331,8 +338,11 @@ class Generator(tf.keras.Model):
                 alpha = tf.nn.softmax(alpha, axis=0)
                 attention = tf.reduce_sum(tf.stack(ancestor_outputs, axis=0) * alpha, axis=0)
 
-            # Concatenate the input with the attention vector
-            input_ = tf.concat([input_, noise, attention], axis=1)
+            # Concatenate the input with the attention vector, the noise and e.v. the cond tensor
+            if self.conditionality:
+                input_ = tf.concat([input_, noise, cond, attention], axis=1)
+            else:
+                input_ = tf.concat([input_, noise, attention], axis=1)
 
             [out, next_input, lstm_output, new_cell_state, new_hidden_state] = self.create_cell(col,
                                                                                                 col_info,

@@ -17,7 +17,7 @@ class Discriminator(keras.Model):
 
     """
 
-    def __init__(self, num_dis_layers, num_dis_hidden, loss_function, l2_reg):
+    def __init__(self, num_dis_layers, num_dis_hidden, loss_function, l2_reg, conditionality):
         """
         Initialize the model
 
@@ -31,12 +31,15 @@ class Discriminator(keras.Model):
             Name of the loss function to be used. (Defined in the class DATGAN)
         l2_reg: bool
             Use l2 regularization or not
+        conditionality: bool
+            Whether to use conditionality or not
         """
         super().__init__()
         self.num_dis_layers = num_dis_layers
         self.num_dis_hidden = num_dis_hidden
         self.loss_function = loss_function
         self.l2_reg = l2_reg
+        self.conditionality = conditionality
 
         # Batch diversity parameters
         self.n_kernel = 10
@@ -98,7 +101,7 @@ class Discriminator(keras.Model):
             self.list_layers.append(layers.Dense(1,
                                                  kernel_regularizer=self.kern_reg))
 
-    def call(self, x):
+    def call(self, x, cond):
         """
         Compute the Discriminator value
 
@@ -106,12 +109,18 @@ class Discriminator(keras.Model):
         ----------
         x: torch.Tensor
             A Torch Tensor of dimensions (N, n_features)
+        cond: torch.Tensor
+            Tensor for the conditionality
 
         Returns
         -------
         torch.Tensor:
             Critic of the current input of dimensions (N, 1)
         """
+
+        # If there's conditionality, we simply concat both the input and the conditional vector
+        if self.conditionality:
+            x = tf.concat([x, cond], axis=1)
 
         for i in range(self.num_dis_layers):
             internal = self.list_layers[i]

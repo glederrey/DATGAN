@@ -10,7 +10,7 @@ class WGGPLoss(GANLoss):
     Wasserstein loss with Gradient Penalty function
     """
 
-    def __init__(self, metadata, var_order, name="WGGPLoss"):
+    def __init__(self, metadata, var_order, conditionality, name="WGGPLoss"):
         """
         Initialize the class
 
@@ -19,11 +19,13 @@ class WGGPLoss(GANLoss):
         metadata: dict
             Metadata for the columns (used when computing the kl divergence)
         var_order: list
-            Ordered list of the variables (
+            Ordered list of the variables
+        conditionality: bool
+            Whether to use conditionality or not
         name: string
             Name of the loss function
         """
-        super().__init__(metadata, var_order, name=name)
+        super().__init__(metadata, var_order, conditionality, name=name)
 
         self.lambda_ = tf.constant(10.0, dtype=tf.float32)
 
@@ -121,3 +123,6 @@ class WGGPLoss(GANLoss):
 
         for l in ['gen_loss', 'kl_div', 'loss', 'reg_loss']:
             logs['generator'][l] = []
+
+        if self.conditionality:
+            logs['generator']['cond_loss'] = []

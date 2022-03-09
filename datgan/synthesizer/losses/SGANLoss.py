@@ -10,7 +10,7 @@ class SGANLoss(GANLoss):
     Cross-entropy loss function
     """
 
-    def __init__(self, metadata, var_order, name="SGANLoss"):
+    def __init__(self, metadata, var_order, conditionality, name="SGANLoss"):
         """
         Initialize the class
 
@@ -19,11 +19,13 @@ class SGANLoss(GANLoss):
         metadata: dict
             Metadata for the columns (used when computing the kl divergence)
         var_order: list
-            Ordered list of the variables (
+            Ordered list of the variables
+        conditionality: bool
+            Whether to use conditionality or not
         name: string
             Name of the loss function
         """
-        super().__init__(metadata, var_order, name=name)
+        super().__init__(metadata, var_order, conditionality, name=name)
 
         self.cross_entropy = tf.keras.losses.BinaryCrossentropy()
 
@@ -115,3 +117,6 @@ class SGANLoss(GANLoss):
 
         for l in ['gen_loss', 'kl_div', 'reg_loss', 'loss']:
             logs['generator'][l] = []
+
+        if self.conditionality:
+            logs['generator']['cond_loss'] = []
