@@ -10,6 +10,7 @@ import time
 import numpy as np
 from tqdm import tqdm
 import tensorflow as tf
+from sklearn.preprocessing import OneHotEncoder
 
 from datgan.utils.utils import elapsed_time
 from datgan.synthesizer.generator import Generator
@@ -26,9 +27,9 @@ class Synthesizer:
     Synthesizer for the DATGAN model
     """
 
-    def __init__(self, output, metadata, dag, batch_size, conditionality, z_dim, noise, learning_rate, g_period, l2_reg,
-                 num_gen_rnn, num_gen_hidden, num_dis_layers, num_dis_hidden, label_smoothing, loss_function, var_order,
-                 n_sources, save_checkpoints, restore_session, verbose):
+    def __init__(self, output, metadata, dag, batch_size, z_dim, noise, learning_rate, g_period, l2_reg, num_gen_rnn,
+                 num_gen_hidden, num_dis_layers, num_dis_hidden, label_smoothing, loss_function, var_order, n_sources,
+                 save_checkpoints, restore_session, verbose):
         """
         Constructs all the necessary attributes for the DATGANSynthesizer class.
         Parameters
@@ -41,8 +42,6 @@ class Synthesizer:
             Directed Acyclic Graph provided by the user.
         batch_size: int
             Size of the batch to feed the model at each step. Defined in the DATGAN class.
-        conditionality: bool, default False
-            Whether to use conditionality for the DATGAN or not
         z_dim: int
             Dimension of the noise vector used as an input to the generator. Defined in the DATGAN class.
         noise: float
@@ -83,7 +82,6 @@ class Synthesizer:
         self.metadata = metadata
         self.dag = dag
         self.batch_size = batch_size
-        self.conditionality = conditionality
         self.z_dim = z_dim
         self.noise = noise
         self.learning_rate = learning_rate
@@ -107,9 +105,13 @@ class Synthesizer:
         self.checkpoint_dir = self.output + 'checkpoints'
         self.checkpoint_prefix = os.path.join(self.checkpoint_dir, "ckpt")
 
+        # Transformer
+        self.onehot = OneHotEncoder(categories=[np.array(self.var_order)], sparse=False)
+
         # Other parameters
         self.generator = None
         self.discriminator = None
+        self.qnet = None
         self.optimizerD = None
         self.optimizerG = None
         self.loss = None
@@ -118,6 +120,9 @@ class Synthesizer:
 
         # zero value
         self.zero = tf.Variable(0, dtype=tf.float32)
+
+        # Categorical Cross Entropy
+        self.sce = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
 
     def fit(self, encoded_data, num_epochs):
         """
@@ -173,15 +178,8 @@ class Synthesizer:
                 # Reset the logs in the class for the loss function
                 self.loss.reset_logs()
 
-                # Train one step of the discriminator
-                discr_logs = self.train_step_discr(transformed_batch)
-
-                # Train one step of the generator
-                if iter_ % self.g_period == 0:
-                    gen_logs = self.train_step_gen(transformed_batch)
-                else:
-                    # Empty logs
-                    gen_logs = {}
+                # Make one step of training
+                discr_logs, gen_logs = self.train_step(transformed_batch, (iter_ % self.g_period == 0))
 
                 # Get the logs and temporarily save them
                 logs = {'discriminator': discr_logs, 'generator': gen_logs}
@@ -220,10 +218,6 @@ class Synthesizer:
                 print("  KL div.: {:.2e}".format(self.logging['generator']['kl_div'][-1]))
                 if self.loss_function == 'SGAN':
                     print("  Reg. loss: {:.2e}".format(self.logging['generator']['reg_loss'][-1]))
-                if self.conditionality:
-                    print("  Cond. loss: {:.2e}".format(self.logging['generator']['cond_loss'][-1]))
-                    print("  Gen loss with cond.: {:.2e}".format(self.logging['generator']['loss'][-1] +
-                                                                 self.logging['generator']['cond_loss'][-1]))
                 print("\033[1m  Gen. loss: {:.2e}\033[0m".format(self.logging['generator']['loss'][-1]))
 
                 print("Discriminator:")
@@ -264,11 +258,9 @@ class Synthesizer:
 
         # Load the generator and the discriminator
         self.generator = Generator(self.metadata, self.dag, self.batch_size, self.z_dim, self.num_gen_rnn,
-                                   self.num_gen_hidden, self.var_order, self.loss_function, self.l2_reg,
-                                   self.conditionality, self.verbose)
+                                   self.num_gen_hidden, self.var_order, self.loss_function, self.l2_reg, self.verbose)
 
-        self.discriminator = Discriminator(self.num_dis_layers, self.num_dis_hidden, self.loss_function, self.l2_reg,
-                                           self.conditionality)
+        self.discriminator = Discriminator(self.num_dis_layers, self.num_dis_hidden, self.loss_function, self.l2_reg)
 
         # Get the optimizer depending on the loss function
         if self.loss_function == 'SGAN':
@@ -277,7 +269,7 @@ class Synthesizer:
             self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.5, beta_2=0.9)
 
             # Loss function
-            self.loss = SGANLoss(self.metadata, self.var_order, self.conditionality)
+            self.loss = SGANLoss(self.metadata, self.var_order)
 
         elif self.loss_function == 'WGAN':
             # Optimizers
@@ -285,14 +277,14 @@ class Synthesizer:
             self.optimizerD = tf.keras.optimizers.RMSprop(learning_rate=self.learning_rate)
 
             # Loss function
-            self.loss = WGANLoss(self.metadata, self.var_order, self.conditionality)
+            self.loss = WGANLoss(self.metadata, self.var_order)
         elif self.loss_function == 'WGGP':
             # Optimizers
             self.optimizerG = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.0, beta_2=0.9)
             self.optimizerD = tf.keras.optimizers.Adam(learning_rate=self.learning_rate, beta_1=0.0, beta_2=0.9)
 
             # Loss function
-            self.loss = WGGPLoss(self.metadata, self.var_order, self.conditionality)
+            self.loss = WGGPLoss(self.metadata, self.var_order)
 
         self.checkpoint = tf.train.Checkpoint(epoch=tf.Variable(0),
                                               generator_optimizer=self.optimizerG,
@@ -321,80 +313,35 @@ class Synthesizer:
                     self.logging = json.load(infile)
 
     @tf.function
-    def train_step_gen(self, batch):
+    def train_step(self, batch, train_gen):
         """
-        Do one step of the optimization process for the generator
+        Do one step of the training process
 
         Parameters
         ----------
         batch: tf.Tensor
-            Tensor of the original data
+            Tensor of the original encoded data
+        train_gen: bool
+            Boolean value telling the model if it should train the Generator for this step
+
+        Returns
+        -------
+
         """
         noise = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 
-        if self.conditionality:
-            zero_cond = tf.zeros([self.batch_size, self.metadata['num_cat_cond']])
-        else:
-            zero_cond = tf.zeros([self.batch_size, 0])
+        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
 
-        with tf.GradientTape() as gen_tape:
             # Only train the generator every g_period steps
-            synth = self.generator(noise, zero_cond, training=True)
-
-            # Transform the data
-            batch_synth = self.transform_data(synth, synthetic=True)
-
-            synth_output = self.discriminator(batch_synth, zero_cond, training=True)
-
-            gen_loss = self.loss.gen_loss(synth_output,
-                                          batch,
-                                          batch_synth,
-                                          tf.reduce_sum(self.generator.losses))
-
-            if self.conditionality:
-                cond = self.generate_cond()
-
-                synth_cond = self.generator(noise, cond, training=True)
-
-                # Transform the data
-                batch_synth_cond = self.transform_data(synth_cond, synthetic=True)
-
-                cond_loss = self.loss.cond_loss(batch_synth_cond, cond)
-
-                gen_loss += cond_loss
-
-        gen_grad = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
-        self.optimizerG.apply_gradients(zip(gen_grad, self.generator.trainable_variables))
-
-        return self.loss.get_logs('generator')
-
-    @tf.function
-    def train_step_discr(self, batch):
-        """
-        Do one step of the optimization process for the discriminator
-
-        Parameters
-        ----------
-        batch: tf.Tensor
-            Tensor of the original data
-        """
-        noise = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
-
-        if self.conditionality:
-            zero_cond = tf.zeros([self.batch_size, self.metadata['num_cat_cond']])
-        else:
-            zero_cond = tf.zeros([self.batch_size, 0])
-
-        with tf.GradientTape(persistent=True) as disc_tape:
-            # Only train the generator every g_period steps
-            synth = self.generator(noise, zero_cond, training=True)
+            synth = self.generator(noise, training=True)
 
             # Transform the data
             batch_synth = self.transform_data(synth, synthetic=True)
 
             # Use the discriminator on the original and synthetic data
-            orig_output = self.discriminator(batch, zero_cond, training=True)
-            synth_output = self.discriminator(batch_synth, zero_cond, training=True)
+            orig_output = self.discriminator(batch, training=True)
+            synth_output = self.discriminator(batch_synth, training=True)
+
 
             # Compute the loss function for the discriminator
             if self.loss_function in ['SGAN', 'WGAN']:
@@ -405,17 +352,29 @@ class Synthesizer:
 
                 # Compute interpolated values
                 alpha = tf.random.uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
-                batch_interp = alpha*batch + (tf.ones_like(alpha)-alpha)*batch_synth
+                batch_interp = alpha * batch + (tf.ones_like(alpha) - alpha) * batch_synth
 
                 with tf.GradientTape() as gp_tape:
                     gp_tape.watch(batch_interp)
-                    interp_output = self.discriminator(batch_interp, zero_cond, training=True)
+                    interp_output = self.discriminator(batch_interp, training=True)
                 interp_grad = gp_tape.gradient(interp_output, batch_interp)
 
                 discr_loss = self.loss.discr_loss(orig_output,
                                                   synth_output,
                                                   interp_grad,
                                                   tf.reduce_sum(self.discriminator.losses))
+
+            # If we need to train the generator, compute its loss function...
+            if train_gen:
+                gen_loss = self.loss.gen_loss(synth_output,
+                                              batch,
+                                              batch_synth,
+                                              tf.reduce_sum(self.generator.losses))
+
+        # ... and apply the gradients
+        if train_gen:
+            gen_grad = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
+            self.optimizerG.apply_gradients(zip(gen_grad, self.generator.trainable_variables))
 
         # Apply one step of optimization for the Discriminator
         discr_grad = disc_tape.gradient(discr_loss, self.discriminator.trainable_variables)
@@ -426,7 +385,7 @@ class Synthesizer:
             for w in self.discriminator.trainable_variables:
                 w.assign(tf.clip_by_value(w, -0.01, 0.01))
 
-        return self.loss.get_logs('discriminator')
+        return self.loss.get_logs('discriminator'), self.loss.get_logs('generator') if train_gen else {}
 
     def transform_data(self, dict_, synthetic):
         """
@@ -473,13 +432,15 @@ class Synthesizer:
 
         return tf.concat(data, axis=1)
 
-    def sample(self, n_samples, cond):
+    def sample(self, n_samples):
         """
         Use the generator to sample data
+
         Parameters
         ----------
         n_samples: int
             Number of samples
+
         Returns
         -------
         samples: numpy.ndarray
@@ -494,7 +455,7 @@ class Synthesizer:
             z = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 
             # Generate data
-            synth = self.generator(z, cond)
+            synth = self.generator(z)
 
             if i == 0:
                 samples = synth
@@ -506,39 +467,3 @@ class Synthesizer:
             samples[col] = samples[col].numpy()[:n_samples, :]
 
         return samples
-
-    def generate_cond(self):
-        """
-        Generate a conditional vector for the generator
-
-        Returns
-        -------
-        cond_vec: tf.Tensor
-            Tensor of size batch_size * num_cond_cat
-        """
-
-        logs = tf.math.log(tf.ones([2, self.metadata['num_cat_cond']]))
-        chosen_vals = tf.random.categorical(logs, self.batch_size)
-        cond_vec = tf.one_hot(chosen_vals, depth=self.metadata['num_cat_cond'])
-        cond_vec = tf.clip_by_value(tf.reduce_sum(cond_vec, axis=0),
-                                    clip_value_min=0.0,
-                                    clip_value_max=1.0)
-
-        """
-        cond_vec = tf.zeros([self.batch_size, 0])
-
-        for col in self.var_order:
-            col_details = self.metadata['details'][col]
-            idx = tf.random.uniform([self.batch_size], minval=0, maxval=col_details['n_cat'], dtype=tf.int32)
-
-            # Create random cond vector
-            cond_vars = tf.random.uniform([self.batch_size, 1])
-            # Might need to change the threshold value
-            cond_vars = tf.cast(cond_vars <= 0.05, dtype=tf.float32)
-
-            tmp = tf.multiply(tf.one_hot(idx, depth=col_details['n_cat']), cond_vars)
-
-            cond_vec = tf.concat([cond_vec, tmp], axis=1)
-        """
-
-        return cond_vec

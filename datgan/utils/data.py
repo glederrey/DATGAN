@@ -31,7 +31,7 @@ class EncodedDataset:
     Original class from TGAN.
     """
 
-    def __init__(self, data, metadata, conditionality, verbose):
+    def __init__(self, data, metadata, verbose):
         """Initialize object.
 
         Parameters
@@ -40,8 +40,6 @@ class EncodedDataset:
             Original dataset
         metadata: dict
             Dictionary containing information about the data in the dataframe
-        conditionality: bool
-            Whether to use conditionality or not
         verbose: int
             Level of verbose.
         """
@@ -54,8 +52,6 @@ class EncodedDataset:
 
         self.metadata = {'details': metadata}
         self.columns = None
-
-        self.conditionality = conditionality
 
         self.continuous_transformer = MultiModalNumberTransformer(verbose)
         self.categorical_transformer = LabelEncoder()
@@ -88,7 +84,6 @@ class EncodedDataset:
 
         self.columns = self.original_data.columns
 
-        total_categories = 0
 
         for col in self.columns:
 
@@ -98,40 +93,12 @@ class EncodedDataset:
                 if self.verbose > 0:
                     print("Encoding continuous variable \"{}\"...".format(col))
 
-                # Check that we have the correct dict for the conditionality
-                if self.conditionality:
-                    if 'categories' not in col_details.keys():
-                        if self.verbose > 0:
-                            print("  Categories for variable '{}' not provided => creating a unique "
-                                  "category".format(col))
-
-                        # Create the unique category
-                        if 'bounds' in col_details.keys():
-                            col_details['categories'] = {
-                                'name': col_details['bounds']
-                            }
-                        else:
-                            col_details['categories'] = {
-                                'name': [-np.infty, np.infty]
-                            }
-
                 column_data = self.original_data[col].values.reshape([-1, 1])
                 # If there's a function to be applied on the data, we do it before the encoding
                 if 'apply_func' in col_details:
                     column_data = col_details['apply_func'](column_data)
                     self.metadata['details'][col]['apply_inv_func'] = inversefunc(col_details['apply_func'],
                                                                                   accuracy=0)
-
-                    if self.conditionality:
-                        cat = Categories(col, col_details['categories'], col_details['apply_func'])
-                elif self.conditionality:
-                    cat = Categories(col, col_details['categories'], None)
-
-                # Add the categories to make sure we save it later
-                if self.conditionality:
-                    self.metadata['details'][col]['categories'] = cat
-                    self.metadata['details'][col]['n_cat'] = len(cat.ordered_categories)
-                    total_categories += len(cat.ordered_categories)
 
                 features, probs, model, n_modes = self.continuous_transformer.transform(column_data)
                 self.data[col] = tf.convert_to_tensor(np.concatenate((features, probs), axis=1), dtype=tf.float32)
@@ -150,13 +117,8 @@ class EncodedDataset:
                 self.metadata['details'][col]['n'] = mapping.shape[0]
                 self.metadata['details'][col]['mapping'] = mapping
 
-                if self.conditionality:
-                    self.metadata['details'][col]['n_cat'] = mapping.shape[0]
-                    total_categories += mapping.shape[0]
-
         self.metadata["num_features"] = num_cols
         self.metadata["len"] = len(self.original_data)
-        self.metadata["num_cat_cond"] = total_categories
         check_metadata(self.metadata)
 
     def transform(self, data):
@@ -430,149 +392,6 @@ def check_metadata(metadata):
     message = 'The given metadata contains unsupported types.'
     assert all([metadata['details'][col]['type'] in ['categorical', 'continuous']
                 for col in metadata['details'].keys()]), message
-
-
-class Categories:
-    """
-    Class defining the categories for the continuous variables.
-
-    It's used when the DATGAN is using conditionality.
-    """
-
-    def __init__(self, var_name, categories, lambda_func):
-        """
-        Initialize the class
-
-        Parameters
-        ----------
-        var_name: str
-            Name of the current variable
-        categories: dict
-            Dictionary of the categories, defined by the user
-        lambda_func: function
-            Lambda function, defined by the user
-        """
-
-        self.var_name = var_name
-        self.categories = categories
-        self.lambda_func = lambda_func
-        self.ordered_names = []
-        self.ordered_categories = []
-        self.ordered_categories_lambda = []
-
-        self.prepare_categories()
-
-    def prepare_categories(self):
-        """
-        Get the ordered list of categories names and prepare the final dictionnary.
-
-        Raises
-        -------
-        ValueError:
-            If the upper bound of the previous category does not correspond to a lower bound from any other categories.
-
-        """
-
-        # Order the categories and make sure there are no holes
-        untreated = set(self.categories.keys())
-        self.ordered_names = []
-
-        first_cat = None
-        min_val = np.infty
-
-        for cat in untreated:
-            if self.categories[cat][0] < min_val:
-                min_val = self.categories[cat][0]
-                first_cat = cat
-
-        untreated.remove(first_cat)
-        self.ordered_names.append(first_cat)
-
-        while len(untreated) > 0:
-
-            next_cat = None
-            for cat in untreated:
-                if self.categories[cat][0] == self.categories[self.ordered_names[-1]][1]:
-                    next_cat = cat
-
-            if not next_cat:
-                raise ValueError("Could not find a category that has the value {} as its lower bound for category '{}'"
-                                 .format(self.categories[self.ordered_names[-1]][1], self.ordered_names[-1]))
-
-            untreated.remove(next_cat)
-            self.ordered_names.append(next_cat)
-
-        self.ordered_names = np.array(self.ordered_names)
-
-        for c in self.ordered_names:
-            self.ordered_categories.append({
-                'name': c,
-                'LB': self.categories[c][0],
-                'UB': self.categories[c][1]
-            })
-
-            # Apply the lambda function if there's one
-            if self.lambda_func:
-                self.ordered_categories_lambda.append({
-                    'name': c,
-                    'LB': self.lambda_func(self.categories[c][0]),
-                    'UB': self.lambda_func(self.categories[c][1])
-                })
-            else:
-                self.ordered_categories_lambda.append(self.ordered_categories[-1])
-
-    def get_cat_name(self, value, use_lambda=False):
-        """
-        Get the name of the category based on the value provided
-
-        Parameters
-        ----------
-        value: float
-            Value to check in which category in belongs to
-        use_lambda: bool
-            Use the bounds after applying the lambda function or not
-        Returns
-        -------
-        str:
-            Name of the category
-        """
-
-        if use_lambda:
-            cats = self.ordered_categories_lambda
-        else:
-            cats = self.ordered_categories
-
-        for c_dict in cats:
-            if c_dict['LB'] <= value < c_dict['UB']:
-                return c_dict['name']
-
-    def get_beta_vec(self, value, use_lambda=False):
-        """
-        Returns a vector of n elements filled with 0 and 1. n corresponds to the number of categories specified by
-        the user.
-
-        Parameters
-        ----------
-        value: str or float
-            Value or name of the category
-        use_lambda:
-            Use the bounds after applying the lambda function or not
-
-        Returns
-        -------
-        ndarray:
-            Array of 1s and 0s corresponding to the category
-        """
-
-        if type(value) is str:
-            if value not in self.ordered_names:
-                raise ValueError("Could not find category name '{}' in the available categories ({}) for variable '{}'."
-                                 .format(value, ", ".join(self.ordered_names), self.var_name))
-            return np.array(self.ordered_names == value, dtype=int)
-        else:
-            name = self.get_cat_name(value, use_lambda)
-            return np.array(self.ordered_names == name, dtype=int)
-
 
 def check_inputs(function):
     """

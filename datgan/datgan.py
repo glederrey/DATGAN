@@ -4,8 +4,10 @@
 import os
 import time
 import dill
+import types
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 import tensorflow as tf
 from datetime import datetime
 
@@ -39,9 +41,9 @@ class DATGAN:
     """
 
     def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=None, num_epochs=100,
-                 batch_size=500, conditionality=True, save_checkpoints=True, restore_session=True, learning_rate=None,
-                 g_period=None, l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1,
-                 num_dis_hidden=100, noise=0.2, verbose=1):
+                 batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, g_period=None,
+                 l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100,
+                 noise=0.2, verbose=1):
         """
         Constructs all the necessary attributes for the DATGAN class.
 
@@ -62,8 +64,6 @@ class DATGAN:
             Number of epochs to use during training.
         batch_size: int, default 500
             Size of the batch to feed the model at each step.
-        conditionality: bool, default False
-            Whether to use conditionality for the DATGAN or not
         save_checkpoints: bool, default True
             Whether to store checkpoints of the model after each training epoch.
         restore_session: bool, default True
@@ -119,7 +119,6 @@ class DATGAN:
         self.batch_size = batch_size
         self.z_dim = z_dim
         self.noise = noise
-        self.conditionality = conditionality
         self.learning_rate = learning_rate
         self.g_period = g_period
         self.l2_reg = l2_reg
@@ -209,7 +208,7 @@ class DATGAN:
                 print("Preprocessing the data!")
 
             # Preprocess the original data
-            self.encoded_data = EncodedDataset(data, metadata, self.conditionality, self.verbose)
+            self.encoded_data = EncodedDataset(data, metadata, self.verbose)
             self.encoded_data.fit_transform()
 
             # Save them both
@@ -280,9 +279,9 @@ class DATGAN:
             dt_string = start.strftime("%d/%m/%Y %H:%M:%S")
             print("Start training DATGAN with the {} loss ({}).".format(self.loss_function, dt_string))
 
-        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.conditionality,
-                                       self.z_dim, self.noise, self.learning_rate, self.g_period, self.l2_reg,
-                                       self.num_gen_rnn, self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim, self.noise,
+                                       self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
+                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
                                        self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
                                        self.save_checkpoints, self.restore_session, self.verbose)
 
@@ -293,7 +292,7 @@ class DATGAN:
         if self.verbose > 0:
             dt_string = end.strftime("%d/%m/%Y %H:%M:%S")
 
-            delta = time.perf_counter()-start_t
+            delta = time.perf_counter() - start_t
             str_delta = elapsed_time(delta)
 
             print("DATGAN has finished training ({}) - Training time: {}".format(dt_string, str_delta))
@@ -302,17 +301,22 @@ class DATGAN:
     """                                                  Sampling                                                  """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def sample(self, num_samples, cond_dict=None, sampling='SS'):
+    def sample(self, num_samples, cond_dict={}, sampling='SS', timeout=True):
         """
-        Create a DataFrame with the synthetic generate data
+        Create a DataFrame with the synthetic generate data. Conditionality is done through a rejection sampling
+        process. For categorical variables, you need to provide the categories you want to get. For continuous
+        variables, you need to provide a lambda function that returns a boolean based on the values of the variable.
+
         Parameters
         ----------
         num_samples: int
             Number of sample to provide
         cond_dict: dict, default None
-            Conditional dictionary. Only used if the DATGAN model was initialized and trained with conditionality.
+            Conditional dictionary.
         sampling: str, default 'SS'
             Type of sampling to use. Only accepts the following values: 'SS', 'SA', 'AS', and 'AA'
+        timeout: bool, default True
+            Use a timeout to stop sampling if the model can't generate the data asked in the conditional dict
         Returns
         -------
         pandas.DataFrame:
@@ -321,45 +325,18 @@ class DATGAN:
 
         self.encoded_data.set_sampling_technique(sampling)
 
+        self.test_conditional_dict(cond_dict)
+
         num_sampled_data = 0
         final_samples = pd.DataFrame()
+        count_no_samples = 0
 
-        # Prepare the cond vector
-        cond = np.zeros([self.batch_size, 0])
-
-        if self.conditionality:
-            # Go through all variables to fill the conditional tensor
-            for col in self.var_order:
-                col_details = self.metadata['details'][col]
-
-                # Start with 0s
-                tmp = np.zeros([self.batch_size, col_details['n_cat']])
-
-                # The current column is present in the dictionary for conditionals
-                if col in cond_dict.keys():
-
-                    # Make sure the type is of list, or transform it
-                    if isinstance(cond_dict[col], list):
-                        list_conds = cond_dict[col]
-                    else:
-                        list_conds = [cond_dict[col]]
-
-                    # Add 1 where we want to use the conditionality
-                    for i in list_conds:
-                        try:
-                            idx = np.where(col_details['mapping'] == str(i))[0][0]
-                            tmp[:, idx] = 1
-                        except IndexError:
-                            raise ValueError("The condition {} does not exist in the existing categories ({})!"
-                                             .format(i, ", ".join(col_details['mapping'])))
-
-                cond = np.concatenate([cond, tmp], axis=1)
-
-        cond = tf.convert_to_tensor(cond, dtype=tf.float32)
+        if self.verbose > 0:
+            pbar = tqdm(total=num_samples, desc="Sampling from DATGAN")
 
         while num_sampled_data <= num_samples:
 
-            encoded_samples = self.synthesizer.sample(self.batch_size, cond)
+            encoded_samples = self.synthesizer.sample(self.batch_size)
 
             decoded_samples = self.encoded_data.reverse_transform(encoded_samples).copy()
 
@@ -380,17 +357,112 @@ class DATGAN:
 
                         idx_to_keep *= np.array(idx)
 
-            # Remove the values that are outside of the bounds
+                if col in cond_dict.keys():
+                    if col_details['type'] == 'continuous':
+                        idx = cond_dict[col](decoded_samples[col])
+                    else:
+                        idx = np.ones(self.batch_size, dtype=bool)
+
+                        for k in cond_dict[col]:
+                            idx *= (decoded_samples[col] == k)
+
+                    idx_to_keep *= np.array(idx)
+
+            # Select a subset of the samples according to the conditional dictionary
             decoded_samples = decoded_samples[idx_to_keep]
 
-            num_sampled_data += len(decoded_samples)
+            n_samp = len(decoded_samples)
+
+            if n_samp > 0:
+                count_no_samples = 0
+            else:
+                count_no_samples += 1
+
+            # If timeout, we stop sampling now
+            if timeout and count_no_samples == 3:
+                raise TimeoutError("DATGAN was not able to provide any samples with the required copnditionals 3 "
+                                   "times in a row. => Sampling is stopped.")
+
+            if self.verbose > 0:
+                if num_sampled_data + n_samp >= num_samples:
+                    pbar.update(num_samples - num_sampled_data)
+                else:
+                    pbar.update(n_samp)
+
+            num_sampled_data += n_samp
 
             final_samples = pd.concat([final_samples, decoded_samples], ignore_index=True)
 
         # Now the df is too big => we make sure it has the right size
         final_samples = final_samples.sample(num_samples)
         final_samples.index = range(len(final_samples))
+
+        if self.verbose > 0:
+            pbar.close()
+
         return final_samples
+
+    def test_conditional_dict(self, cond_dict):
+        """
+        Test that the values provided in the conditional dictionary can be used to sample the DATGAN
+
+        Parameters
+        ----------
+        cond_dict: dict, default None
+            Conditional dictionary.
+
+        Raises
+        -------
+        ValueError if the values do not correspond to what is expected.
+
+        """
+
+        # Test the dictionary for conditionals
+        for k in cond_dict.keys():
+            col_details = self.metadata['details'][k]
+
+            if col_details['type'] == 'categorical':
+
+                # Check that the type is ok
+                type_ok = False
+                if isinstance(cond_dict[k], str):
+                    type_ok = True
+
+                    # Check that the value exists in the possible categories
+                    if cond_dict[k] not in col_details['mapping']:
+                        raise ValueError("The key {} for the variable {} does not correspond to an existing category "
+                                         "({})".format(cond_dict[k], k, col_details['mapping']))
+
+                    # Transform into a list
+                    cond_dict[k] = [cond_dict[k]]
+
+                elif isinstance(cond_dict[k], list):
+                    type_ok = True
+                    for el in cond_dict[k]:
+                        if not isinstance(el, str):
+                            type_ok = False
+
+                        # Check that the value exists in the possible categories
+                        if el not in col_details['mapping']:
+                            raise ValueError(
+                                "The key '{}' for the variable '{}' does not correspond to an existing category "
+                                "({})".format(el, k, col_details['mapping']))
+
+                if not type_ok:
+                    raise ValueError("The values in the conditional dictionary for the categorical variable '{}' must "
+                                     "be of type 'str' or 'list' of 'str'. You have given the following value(s): {}"
+                                     .format(k, cond_dict[k]))
+
+            else:
+                if not isinstance(cond_dict[k], types.LambdaType):
+                    raise ValueError("The value for the continuous variable '{}' has to be a lambda function "
+                                     "that returns a boolean value!".format(k))
+
+                test = cond_dict[k](0)
+
+                if not isinstance(test, bool):
+                    raise ValueError("The lambda function provided for the continuous variable '{}' must return a "
+                                     "boolean value!".format(k))
 
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
     """                                              Load the model                                                """
@@ -483,5 +555,3 @@ class DATGAN:
                 self.l2_reg = True
             else:
                 self.l2_reg = False
-
-

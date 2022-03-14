@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import tensorflow as tf
+from datgan.utils.data import MultiModalNumberTransformer
 
 
 class GANLoss(tf.keras.losses.Loss):
@@ -9,7 +10,7 @@ class GANLoss(tf.keras.losses.Loss):
     Generic class for the loss function
     """
 
-    def __init__(self, metadata, var_order, conditionality, name="GENERIC_CLASS"):
+    def __init__(self, metadata, var_order, name="GENERIC_CLASS"):
         """
         Initialize the class
 
@@ -19,8 +20,6 @@ class GANLoss(tf.keras.losses.Loss):
             Metadata for the columns (used when computing the kl divergence)
         var_order: list
             Ordered list of the variables
-        conditionality: bool
-            Whether to use conditionality or not
         name: string
             Name of the loss function
         """
@@ -31,7 +30,6 @@ class GANLoss(tf.keras.losses.Loss):
 
         self.metadata = metadata
         self.var_order = var_order
-        self.conditionality = conditionality
 
         self.kl = tf.keras.losses.KLDivergence()
 
@@ -75,37 +73,6 @@ class GANLoss(tf.keras.losses.Loss):
             ptr += tf.constant(col_info['n'])
 
         return kl_div
-
-    def cond_loss(self, synth_output, cond):
-
-        ptr_output = 0
-        ptr_cond = 0
-        loss = []
-
-        for col in self.var_order:
-
-            col_details = self.metadata['details'][col]
-            n = col_details['n']
-            n_cat = col_details['n_cat']
-
-            if col_details['type'] == 'categorical':
-                y = synth_output[:, ptr_output:ptr_output + n]
-                x = cond[:, ptr_cond:ptr_cond + n_cat]
-
-                # Cross entropy loss
-                tmp = tf.reduce_mean(-tf.reduce_sum(tf.math.xlogy(x, y)))
-                loss.append(tmp)
-            else:
-                ptr_output += n
-
-            ptr_output += n
-            ptr_cond += n_cat
-
-        cond_loss = tf.reduce_sum(tf.stack(loss, axis=0))/tf.cast(tf.shape(synth_output)[0], dtype=tf.float32)
-
-        self.logs['generator']['cond_loss'] = cond_loss
-
-        return cond_loss
 
     def reset_logs(self):
         """

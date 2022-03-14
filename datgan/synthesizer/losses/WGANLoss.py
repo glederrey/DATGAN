@@ -10,7 +10,7 @@ class WGANLoss(GANLoss):
     Wasserstein loss function
     """
 
-    def __init__(self, metadata, var_order, conditionality, name="WGANLoss"):
+    def __init__(self, metadata, var_order, name="WGANLoss"):
         """
         Initialize the class
 
@@ -20,12 +20,10 @@ class WGANLoss(GANLoss):
             Metadata for the columns (used when computing the kl divergence)
         var_order: list
             Ordered list of the variables
-        conditionality: bool
-            Whether to use conditionality or not
         name: string
             Name of the loss function
         """
-        super().__init__(metadata, var_order, conditionality, name=name)
+        super().__init__(metadata, var_order, name=name)
 
     def gen_loss(self, synth_output, transformed_orig, transformed_synth, l2_reg):
         """
@@ -108,6 +106,3 @@ class WGANLoss(GANLoss):
 
         for l in ['gen_loss', 'kl_div', 'loss', 'reg_loss']:
             logs['generator'][l] = []
-
-        if self.conditionality:
-            logs['generator']['cond_loss'] = []
