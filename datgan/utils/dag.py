@@ -10,7 +10,7 @@ This file contains the tools to treat the DAG used in the DATGAN.
 import networkx as nx
 
 
-def verify_dag(data, dag):
+def verify_dag(data, dag, conditional_inputs):
     """
     Verify the integrity of the DAG
 
@@ -20,6 +20,8 @@ def verify_dag(data, dag):
         Original dataset
     dag: networkx.DiGraph
         Directed Acyclic Graph representing the relations between the variables
+    conditional_inputs: list-
+        List of variables in the dataset that are used as inputs to the model.
 
     Raises
     ------
@@ -47,9 +49,14 @@ def verify_dag(data, dag):
             raise ValueError("Provided graph is not a DAG.")
 
     # 3. Verify that the dag has the correct number of nodes
-    if len(dag.nodes) != len(data.columns):
+    if len(dag.nodes) != len(data.columns)-len(conditional_inputs):
         raise ValueError("DAG does not have the same number of nodes ({}) as the number of "
                          "variables in the data ({}).".format(len(dag.nodes), len(data.columns)))
+
+    # 4. Check that each variable in the conditional inputs are not in the DAG
+    for c in conditional_inputs:
+        if c in dag.nodes:
+            raise ValueError("The conditional input '{}' has been found in the nodes of the DATGAN. Please, remove it!")
 
 
 def get_in_edges(dag):

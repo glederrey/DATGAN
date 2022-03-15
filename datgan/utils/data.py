@@ -31,7 +31,7 @@ class EncodedDataset:
     Original class from TGAN.
     """
 
-    def __init__(self, data, metadata, verbose):
+    def __init__(self, data, metadata, conditional_inputs, verbose):
         """Initialize object.
 
         Parameters
@@ -40,10 +40,14 @@ class EncodedDataset:
             Original dataset
         metadata: dict
             Dictionary containing information about the data in the dataframe
+        conditional_inputs: list
+            List of variables used as conditional inputs
         verbose: int
             Level of verbose.
         """
         self.original_data = data
+        self.conditional_inputs = conditional_inputs
+        self.original_columns = self.original_data.columns
         self.data = None
 
         if metadata is None:
@@ -78,14 +82,14 @@ class EncodedDataset:
         """
         Transform human-readable data into DATGAN numerical features.
         """
-        num_cols = self.original_data.shape[1]
-
         self.data = {}
 
-        self.columns = self.original_data.columns
+        self.columns = []
 
+        for col in self.original_data.columns:
 
-        for col in self.columns:
+            if col not in self.conditional_inputs:
+                self.columns.append(col)
 
             col_details = self.metadata['details'][col]
 
@@ -94,12 +98,12 @@ class EncodedDataset:
                     print("Encoding continuous variable \"{}\"...".format(col))
 
                 column_data = self.original_data[col].values.reshape([-1, 1])
+
                 # If there's a function to be applied on the data, we do it before the encoding
                 if 'apply_func' in col_details:
                     column_data = col_details['apply_func'](column_data)
                     self.metadata['details'][col]['apply_inv_func'] = inversefunc(col_details['apply_func'],
                                                                                   accuracy=0)
-
                 features, probs, model, n_modes = self.continuous_transformer.transform(column_data)
                 self.data[col] = tf.convert_to_tensor(np.concatenate((features, probs), axis=1), dtype=tf.float32)
 
@@ -111,13 +115,13 @@ class EncodedDataset:
 
                 column_data = self.original_data[col].astype(str).values
                 features = self.categorical_transformer.fit_transform(column_data)
+                mapping = self.categorical_transformer.classes_
                 self.data[col] = tf.one_hot(features, depth=self.categorical_transformer.classes_.shape[0])
 
-                mapping = self.categorical_transformer.classes_
                 self.metadata['details'][col]['n'] = mapping.shape[0]
                 self.metadata['details'][col]['mapping'] = mapping
 
-        self.metadata["num_features"] = num_cols
+        self.metadata["num_features"] = len(self.columns)
         self.metadata["len"] = len(self.original_data)
         check_metadata(self.metadata)
 
@@ -205,7 +209,7 @@ class EncodedDataset:
         if not os.path.exists(path):
             os.makedirs(path)
 
-        for col in self.metadata['details'].keys():
+        for col in self.columns:
 
             details = self.metadata['details'][col]
 

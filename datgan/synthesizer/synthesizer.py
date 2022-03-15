@@ -29,7 +29,7 @@ class Synthesizer:
 
     def __init__(self, output, metadata, dag, batch_size, z_dim, noise, learning_rate, g_period, l2_reg, num_gen_rnn,
                  num_gen_hidden, num_dis_layers, num_dis_hidden, label_smoothing, loss_function, var_order, n_sources,
-                 save_checkpoints, restore_session, verbose):
+                 conditional_inputs, save_checkpoints, restore_session, verbose):
         """
         Constructs all the necessary attributes for the DATGANSynthesizer class.
         Parameters
@@ -70,6 +70,8 @@ class Synthesizer:
             Ordered list for the variables. Used in the Generator.
         n_sources: int
             Number of source nodes in the DAG.
+        conditional_inputs: list
+            List of variables in the dataset that are used as inputs to the model.
         save_checkpoints: bool, default True
             Whether to store checkpoints of the model after each training epoch.
         restore_session: bool, default True
@@ -95,6 +97,7 @@ class Synthesizer:
         self.loss_function = loss_function
         self.var_order = var_order
         self.n_sources = n_sources
+        self.conditional_inputs = conditional_inputs
         self.save_checkpoints = save_checkpoints
         self.restore_session = restore_session
         self.verbose = verbose
@@ -175,11 +178,14 @@ class Synthesizer:
                 # Transformed the data in a tensor
                 transformed_batch = self.transform_data(batch, synthetic=False)
 
+                # Get the conditional data
+                cond_batch = self.get_cond_batch(batch)
+
                 # Reset the logs in the class for the loss function
                 self.loss.reset_logs()
 
                 # Make one step of training
-                discr_logs, gen_logs = self.train_step(transformed_batch, (iter_ % self.g_period == 0))
+                discr_logs, gen_logs = self.train_step(transformed_batch, cond_batch, (iter_ % self.g_period == 0))
 
                 # Get the logs and temporarily save them
                 logs = {'discriminator': discr_logs, 'generator': gen_logs}
@@ -258,7 +264,8 @@ class Synthesizer:
 
         # Load the generator and the discriminator
         self.generator = Generator(self.metadata, self.dag, self.batch_size, self.z_dim, self.num_gen_rnn,
-                                   self.num_gen_hidden, self.var_order, self.loss_function, self.l2_reg, self.verbose)
+                                   self.num_gen_hidden, self.var_order, self.loss_function, self.l2_reg,
+                                   self.conditional_inputs, self.verbose)
 
         self.discriminator = Discriminator(self.num_dis_layers, self.num_dis_hidden, self.loss_function, self.l2_reg)
 
@@ -313,7 +320,7 @@ class Synthesizer:
                     self.logging = json.load(infile)
 
     @tf.function
-    def train_step(self, batch, train_gen):
+    def train_step(self, batch, cond_batch, train_gen):
         """
         Do one step of the training process
 
@@ -333,15 +340,18 @@ class Synthesizer:
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
 
             # Only train the generator every g_period steps
-            synth = self.generator(noise, training=True)
+            synth = self.generator(noise, cond_batch, training=True)
 
             # Transform the data
             batch_synth = self.transform_data(synth, synthetic=True)
 
+            if len(self.conditional_inputs) > 0:
+                batch = tf.concat([batch, cond_batch], axis=1)
+                batch_synth = tf.concat([batch_synth, cond_batch], axis=1)
+
             # Use the discriminator on the original and synthetic data
             orig_output = self.discriminator(batch, training=True)
             synth_output = self.discriminator(batch_synth, training=True)
-
 
             # Compute the loss function for the discriminator
             if self.loss_function in ['SGAN', 'WGAN']:
@@ -432,7 +442,32 @@ class Synthesizer:
 
         return tf.concat(data, axis=1)
 
-    def sample(self, n_samples):
+    def get_cond_batch(self, dict_):
+        """
+        Get the batch of data for the conditional inputs
+
+        Parameters
+        ----------
+        dict_: dict
+            Dictionary of the encoded data
+
+        Returns
+        -------
+        tensor: tf.Tensor
+            Input data
+        """
+
+        if len(self.conditional_inputs) > 0:
+            data = []
+
+            for col in self.conditional_inputs:
+                data.append(dict_[col])
+
+            return tf.concat(data, axis=1)
+        else:
+            return None
+
+    def sample(self, n_samples, cond_inputs):
         """
         Use the generator to sample data
 
@@ -455,7 +490,7 @@ class Synthesizer:
             z = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 
             # Generate data
-            synth = self.generator(z)
+            synth = self.generator(z, cond_inputs)
 
             if i == 0:
                 samples = synth

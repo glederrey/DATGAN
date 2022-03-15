@@ -78,6 +78,7 @@ def ml_assessment(df_orig, df_synth, continuous_columns, categorical_columns, pa
 
     return tmp
 
+
 def transform_results(results, continuous_columns, categorical_columns):
     """
     Transform the results of the function `ml_assessment` in human-readable format.

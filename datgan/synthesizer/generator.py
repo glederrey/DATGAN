@@ -18,7 +18,7 @@ class Generator(tf.keras.Model):
     """
 
     def __init__(self, metadata, dag, batch_size, z_dim, num_gen_rnn, num_gen_hidden, var_order, loss_function,
-                 l2_reg, verbose):
+                 l2_reg, conditional_inputs, verbose):
         """
         Initialize the class
 
@@ -43,6 +43,8 @@ class Generator(tf.keras.Model):
             Name of the loss function to be used. (Defined in the class DATGAN)
         l2_reg: bool
             Use l2 regularization or not
+        conditional_inputs: list
+            List of variables in the dataset that are used as inputs to the model.
         verbose: int
             Level of verbose
         """
@@ -57,6 +59,7 @@ class Generator(tf.keras.Model):
         self.var_order = var_order
         self.loss_function = loss_function
         self.l2_reg = l2_reg
+        self.conditional_inputs = conditional_inputs
         self.verbose = verbose
 
         # Get the number of sources
@@ -102,6 +105,9 @@ class Generator(tf.keras.Model):
         self.output_layers = None
         self.input_layers = None
 
+        # conditional input
+        self.cond_input_layers = None
+
         self.define_parameters()
 
     def define_parameters(self):
@@ -127,6 +133,14 @@ class Generator(tf.keras.Model):
         self.hidden_layers = {}
         self.output_layers = {}
         self.input_layers = {}
+
+        # Conditional inputs
+        """
+        self.cond_input_layers = layers.Dense(self.num_gen_rnn,
+                                              kernel_regularizer=self.kern_reg,
+                                              name='cond_input')
+        """
+        self.cond_input_layers = {}
 
         # Compute the in_edges of the dag
         in_edges = get_in_edges(self.dag)
@@ -190,9 +204,12 @@ class Generator(tf.keras.Model):
                 # If the current variable has at least one ancestor, we are learning the alpha vector instead.
                 self.zero_alphas[col] = tf.Variable(tf.zeros([len(ancestors), 1, 1]), name="alpha_{}".format(col))
 
+            self.cond_input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                       kernel_regularizer=self.kern_reg,
+                                                       name='cond_input_{}'.format(col))
+
             # For the cell itself, we have to define multiple layers depending on the type of variables
             self.hidden_layers[col] = layers.Dense(self.num_gen_hidden,
-                                                   activation='tanh',
                                                    kernel_regularizer=self.kern_reg,
                                                    name='hidden_layer_{}'.format(col))
 
@@ -219,7 +236,7 @@ class Generator(tf.keras.Model):
                                                       kernel_regularizer=self.kern_reg,
                                                       name='next_input_{}'.format(col))
 
-    def call(self, z):
+    def call(self, z, cond_inputs=None):
         """
         Build the Generator
 
@@ -227,6 +244,8 @@ class Generator(tf.keras.Model):
         ----------
         z: torch.Tensor
             Noise used as an input for the Generator
+        cond_inputs: torch.Tensor
+            Inputs used as conditionals
 
         Returns
         -------
@@ -333,8 +352,13 @@ class Generator(tf.keras.Model):
                 alpha = tf.nn.softmax(alpha, axis=0)
                 attention = tf.reduce_sum(tf.stack(ancestor_outputs, axis=0) * alpha, axis=0)
 
-            # Concatenate the input with the attention vector, the noise and the cond tensor
-            input_ = tf.concat([input_, noise, attention], axis=1)
+            if len(self.conditional_inputs) > 0:
+                tmp = self.cond_input_layers[col](cond_inputs)
+                # Concatenate the input with the attention vector, the noise and the conditional inputs
+                input_ = tf.concat([input_, noise, attention, tmp], axis=1)
+            else:
+                # Concatenate the input with the attention vector and the noise
+                input_ = tf.concat([input_, noise, attention], axis=1)
 
             [out, next_input, lstm_output, new_cell_state, new_hidden_state] = self.create_cell(col,
                                                                                                 col_info,
