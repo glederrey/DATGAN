@@ -15,7 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 from datgan.utils.utils import elapsed_time
 from datgan.utils.data import EncodedDataset
 from datgan.synthesizer.synthesizer import Synthesizer
-from datgan.utils.dag import verify_dag, get_order_variables, linear_DAG
+from datgan.utils.dag import verify_dag, get_order_variables, linear_dag, transform_dag
 
 
 class DATGAN:
@@ -91,7 +91,7 @@ class DATGAN:
             Upper bound to the gaussian noise added to with the label smoothing. (only used if label_smoothing is
             set to 'TS' or 'OS')
         conditional_inputs: list, default None
-            List of variables in the dataset that are used as inputs to the model.
+            List of variables in the dataset that are used as conditional inputs to the model.
         verbose: int, default 0
             Level of verbose. 0 means nothing, 1 means that some details will be printed, 2 is mostly used for
             debugging purpose.
@@ -220,7 +220,7 @@ class DATGAN:
                 print("Preprocessing the data!")
 
             # Preprocess the original data
-            self.encoded_data = EncodedDataset(data, metadata, self.conditional_inputs, self.verbose)
+            self.encoded_data = EncodedDataset(data, metadata, self.verbose)
             self.encoded_data.fit_transform()
 
             # Save them both
@@ -268,13 +268,16 @@ class DATGAN:
         self.preprocess(data, metadata, preprocessed_data_path)
         self.metadata = self.encoded_data.metadata
 
-        # Verify the integrity of the DAG and get the ordered list of variables for the Generator
         if not dag:
-            self.dag = linear_DAG(data)
+            self.dag = linear_dag(data)
         else:
             self.dag = dag
 
-        verify_dag(data, dag, self.conditional_inputs)
+        # Transform the DAG depending on the conditional inputs
+        self.dag = transform_dag(dag, self.conditional_inputs)
+
+        # Verify the integrity of the DAG and get the ordered list of variables for the Generator
+        verify_dag(data, dag)
         self.var_order, self.n_sources = get_order_variables(dag)
 
         self.default_parameter_values(data)
@@ -343,21 +346,24 @@ class DATGAN:
 
         self.encoded_data.set_sampling_technique(sampling)
 
+        cond_inputs = {}
+
         if len(self.conditional_inputs) > 0:
             if inputs is None:
                 raise ValueError("You need to provide the conditional inputs.")
             else:
                 # We need to transform the conditional inputs according the transformation done in the encoding process
-                cond_inputs_tens = []
                 for col in inputs:
                     col_details = self.metadata['details'][col]
 
                     if col_details['type'] == 'continuous':
-                        data = np.array(inputs[col]).reshape(-1, 1)
+                        data = np.array(inputs[col])
 
                         # Apply lambda function if provided
                         if 'apply_func' in col_details:
                             data = col_details['apply_func'](data)
+
+                        data = data.reshape(-1, 1)
 
                         # Transform the provided inputs using the GMM
                         model = col_details['transform']
@@ -373,19 +379,17 @@ class DATGAN:
                         # Clip the values
                         normalized_values = np.clip(normalized_values, -.99, .99)
 
-                        cond_inputs_tens.append(tf.convert_to_tensor(
-                            np.concatenate([normalized_values, probs], axis=1), dtype=tf.float32))
+                        cond_inputs[col] = tf.convert_to_tensor(
+                            np.concatenate([normalized_values, probs], axis=1), dtype=tf.float32)
                     elif col_details['type'] == 'categorical':
                         # We need to encode the labels from "str" to "int"
                         cat_encoder = LabelEncoder()
                         cat_encoder.classes_ = col_details['mapping']
-                        cond_inputs_tens.append(tf.one_hot(cat_encoder.transform(inputs[col].astype(str)),
-                                                           depth=len(col_details['mapping'])))
+                        cond_inputs[col] = tf.one_hot(cat_encoder.transform(inputs[col].astype(str)),
+                                                      depth=len(col_details['mapping']))
 
             n_cond_inputs = len(inputs[self.conditional_inputs[0]])
             idx_cond_inputs = list(range(n_cond_inputs))
-
-            cond_inputs_tens = tf.concat(cond_inputs_tens, axis=1)
 
         self.test_conditional_dict(cond_dict)
 
@@ -399,20 +403,22 @@ class DATGAN:
         while num_sampled_data <= num_samples:
 
             if len(self.conditional_inputs) > 0:
-                # Select randomly values in the cond_inputs df
+                # Select randomly values in the cond_inputs dictionary
                 samp_idx = np.random.choice(idx_cond_inputs, self.batch_size, replace=(n_cond_inputs < self.batch_size))
-                samples_cond_input = tf.gather(cond_inputs_tens, samp_idx, axis=0)
+                samples_cond_input = {}
+                for c in cond_inputs:
+                    samples_cond_input[c] = tf.gather(cond_inputs[c], samp_idx, axis=0)
             else:
                 samp_idx = None
                 samples_cond_input = None
 
             # Get samples from the synthesizer
-            encoded_samples = self.synthesizer.sample(self.batch_size, samples_cond_input)
+            encoded_samples = self.synthesizer.sample(samples_cond_input)
 
             # Decode the data
             decoded_samples = self.encoded_data.reverse_transform(encoded_samples).copy()
 
-            # Add the conditional inputs values in the decoded samples
+            # Replace the conditional inputs values in the decoded samples
             for col in self.conditional_inputs:
                 decoded_samples[col] = list(inputs[col][samp_idx])
 
@@ -437,10 +443,13 @@ class DATGAN:
                     if col_details['type'] == 'continuous':
                         idx = cond_dict[col](decoded_samples[col])
                     else:
-                        idx = np.ones(self.batch_size, dtype=bool)
+                        idx = np.zeros(self.batch_size, dtype=bool)
 
                         for k in cond_dict[col]:
-                            idx *= (decoded_samples[col] == k)
+                            idx += (decoded_samples[col] == k)
+
+                        # Replace values greater than 1
+                        idx[idx > 1] = 1
 
                     idx_to_keep *= np.array(idx)
 
@@ -565,7 +574,7 @@ class DATGAN:
 
         # Reload the DAG
         if not dag:
-            self.dag = linear_DAG(data)
+            self.dag = linear_dag(data)
         else:
             self.dag = dag
 

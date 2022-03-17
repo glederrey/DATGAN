@@ -105,9 +105,6 @@ class Generator(tf.keras.Model):
         self.output_layers = None
         self.input_layers = None
 
-        # conditional input
-        self.cond_input_layers = None
-
         self.define_parameters()
 
     def define_parameters(self):
@@ -134,14 +131,6 @@ class Generator(tf.keras.Model):
         self.output_layers = {}
         self.input_layers = {}
 
-        # Conditional inputs
-        """
-        self.cond_input_layers = layers.Dense(self.num_gen_rnn,
-                                              kernel_regularizer=self.kern_reg,
-                                              name='cond_input')
-        """
-        self.cond_input_layers = {}
-
         # Compute the in_edges of the dag
         in_edges = get_in_edges(self.dag)
 
@@ -150,7 +139,12 @@ class Generator(tf.keras.Model):
         for i in self.source_nodes:
             existing_noises.append(i)
 
-        for col in self.var_order:
+        vars_without_cond_inputs = []
+        for v in self.var_order:
+            if v not in self.conditional_inputs:
+                vars_without_cond_inputs.append(v)
+
+        for col in vars_without_cond_inputs:
             # We need one lstm cell per variable
             self.lstms[col] = layers.LSTM(self.num_gen_rnn,
                                           return_state=True,
@@ -204,10 +198,6 @@ class Generator(tf.keras.Model):
                 # If the current variable has at least one ancestor, we are learning the alpha vector instead.
                 self.zero_alphas[col] = tf.Variable(tf.zeros([len(ancestors), 1, 1]), name="alpha_{}".format(col))
 
-            self.cond_input_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                       kernel_regularizer=self.kern_reg,
-                                                       name='cond_input_{}'.format(col))
-
             # For the cell itself, we have to define multiple layers depending on the type of variables
             self.hidden_layers[col] = layers.Dense(self.num_gen_hidden,
                                                    kernel_regularizer=self.kern_reg,
@@ -236,7 +226,12 @@ class Generator(tf.keras.Model):
                                                       kernel_regularizer=self.kern_reg,
                                                       name='next_input_{}'.format(col))
 
-    def call(self, z, cond_inputs=None):
+        for col in self.conditional_inputs:
+            self.input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                  kernel_regularizer=self.kern_reg,
+                                                  name='next_input_{}'.format(col))
+
+    def call(self, z, cond_inputs):
         """
         Build the Generator
 
@@ -259,112 +254,111 @@ class Generator(tf.keras.Model):
 
         # Some variables
         outputs = {} # Encoded synthetic variables that will be returned
-        lstm_outputs = {}
         hidden_states = {}
         cell_states = {}
         inputs = {}
         noises = {}
 
-        # Transform the list of inputs into a dictionary
         for i, n in enumerate(self.source_nodes):
             noises[n] = z[i]
 
         for col in self.var_order:
 
-            # Get the ancestors of the current variable in the DAG
-            ancestors = self.ancestors[col]
+            if col not in self.conditional_inputs:
+                # Get the ancestors of the current variable in the DAG
+                ancestors = self.ancestors[col]
 
-            # Get info
-            col_info = self.metadata['details'][col]
+                # Get info
+                col_info = self.metadata['details'][col]
 
-            # Define the input tensor, cell state and hidden state based on the number of in-edges.
-            # No ancestors => corresponds to source nodes
-            if len(self.in_edges[col]) == 0:
-                # Input
-                input_ = self.zero_inputs[col]
-                input_ = tf.tile(input_, [self.batch_size, 1])
-                # Cell state
-                cell_state = self.zero_cell_state
-                # Hidden state
-                hidden_state = self.zero_hidden_state
-            # Only 1 ancestor => simply get the corresponding values
-            elif len(self.in_edges[col]) == 1:
-                ancestor_col = self.in_edges[col][0]
-                # Input
-                input_ = inputs[ancestor_col]
-                # Cell state
-                cell_state = cell_states[ancestor_col]
-                # Hidden state
-                hidden_state = hidden_states[ancestor_col]
-            # Multiple ancestors => we need to use fully connected layers to compute the inputs
-            else:
-                # Go through all in edges to get input, attention and state
-                miLSTM_inputs = []
-                miLSTM_cell_states = []
-                miLSTM_hidden_states = []
-
-                for name in self.in_edges[col]:
-                    miLSTM_inputs.append(inputs[name])
-                    miLSTM_cell_states.append(cell_states[name])
-                    miLSTM_hidden_states.append(hidden_states[name])
-
-                input_ = self.miLSTM_inputs_layers[col](tf.concat(miLSTM_inputs, axis=1))
-                cell_state = self.miLSTM_cell_states_layers[col](tf.concat(miLSTM_cell_states, axis=1))
-                hidden_state = self.miLSTM_hidden_states_layers[col](tf.concat(miLSTM_hidden_states, axis=1))
-
-            # Compute the noise in function of the number of ancestors
-            src_nodes = set(ancestors).intersection(set(self.source_nodes))
-            src_nodes = list(src_nodes)
-
-            # 0 sources => Source node
-            if len(src_nodes) == 0:
-                noise = noises[col]
-            # 1 source => Take the corresponding noise
-            elif len(src_nodes) == 1:
-                noise = noises[src_nodes[0]]
-            # Multiple sources => we need to use a fully connected layer
-            else:
-                src_nodes.sort()
-                str_ = '-'.join(src_nodes)
-
-                # Check if the noise was already computed
-                if str_ in noises:
-                    noise = noises[str_]
+                # Define the input tensor, cell state and hidden state based on the number of in-edges.
+                # No ancestors => corresponds to source nodes
+                if len(self.in_edges[col]) == 0:
+                    # Input
+                    input_ = self.zero_inputs[col]
+                    input_ = tf.tile(input_, [self.batch_size, 1])
+                    # Cell state
+                    cell_state = self.zero_cell_state
+                    # Hidden state
+                    hidden_state = self.zero_hidden_state
+                # Only 1 ancestor => simply get the corresponding values
+                elif len(self.in_edges[col]) == 1:
+                    ancestor_col = self.in_edges[col][0]
+                    # Input
+                    input_ = inputs[ancestor_col]
+                    # Cell state
+                    cell_state = cell_states[ancestor_col]
+                    # Hidden state
+                    hidden_state = hidden_states[ancestor_col]
+                # Multiple ancestors => we need to use fully connected layers to compute the inputs
                 else:
-                    # If not the case, we compute the noise by passing it through a Fully connected layer
-                    tmp_noises = []
-                    for n in src_nodes:
-                        tmp_noises.append(noises[n])
+                    # Go through all in edges to get input, attention and state
+                    miLSTM_inputs = []
+                    miLSTM_cell_states = []
+                    miLSTM_hidden_states = []
 
-                    noise = self.noise_layers[str_](tf.concat(tmp_noises, axis=1))
-                    noises[str_] = noise
+                    for name in self.in_edges[col]:
+                        miLSTM_inputs.append(inputs[name])
+                        miLSTM_cell_states.append(cell_states[name])
+                        miLSTM_hidden_states.append(hidden_states[name])
 
-            # Get the outputs of the ancestors in the DAG
-            ancestor_outputs = []
-            for n in ancestors:
-                ancestor_outputs.append(lstm_outputs[n])
+                    input_ = self.miLSTM_inputs_layers[col](tf.concat(miLSTM_inputs, axis=1))
+                    cell_state = self.miLSTM_cell_states_layers[col](tf.concat(miLSTM_cell_states, axis=1))
+                    hidden_state = self.miLSTM_hidden_states_layers[col](tf.concat(miLSTM_hidden_states, axis=1))
 
-            # Compute the attention vector
-            if len(ancestor_outputs) == 0:
-                attention = self.zero_attention
-            else:
-                alpha = self.zero_alphas[col]
-                alpha = tf.nn.softmax(alpha, axis=0)
-                attention = tf.reduce_sum(tf.stack(ancestor_outputs, axis=0) * alpha, axis=0)
+                # Compute the noise in function of the number of ancestors
+                src_nodes = set(ancestors).intersection(set(self.source_nodes))
+                src_nodes = list(src_nodes)
 
-            if len(self.conditional_inputs) > 0:
-                tmp = self.cond_input_layers[col](cond_inputs)
-                # Concatenate the input with the attention vector, the noise and the conditional inputs
-                input_ = tf.concat([input_, noise, attention, tmp], axis=1)
-            else:
+                # 0 sources => Source node
+                if len(src_nodes) == 0:
+                    noise = noises[col]
+                # 1 source => Take the corresponding noise
+                elif len(src_nodes) == 1:
+                    noise = noises[src_nodes[0]]
+                # Multiple sources => we need to use a fully connected layer
+                else:
+                    src_nodes.sort()
+                    str_ = '-'.join(src_nodes)
+
+                    # Check if the noise was already computed
+                    if str_ in noises:
+                        noise = noises[str_]
+                    else:
+                        # If not the case, we compute the noise by passing it through a Fully connected layer
+                        tmp_noises = []
+                        for n in src_nodes:
+                            tmp_noises.append(noises[n])
+
+                        noise = self.noise_layers[str_](tf.concat(tmp_noises, axis=1))
+                        noises[str_] = noise
+
+                # Get the outputs of the ancestors in the DAG
+                ancestor_outputs = []
+                for n in ancestors:
+                    ancestor_outputs.append(inputs[n])
+
+                # Compute the attention vector
+                if len(ancestor_outputs) == 0:
+                    attention = self.zero_attention
+                else:
+                    alpha = self.zero_alphas[col]
+                    alpha = tf.nn.softmax(alpha, axis=0)
+                    attention = tf.reduce_sum(tf.stack(ancestor_outputs, axis=0) * alpha, axis=0)
+
                 # Concatenate the input with the attention vector and the noise
                 input_ = tf.concat([input_, noise, attention], axis=1)
 
-            [out, next_input, lstm_output, new_cell_state, new_hidden_state] = self.create_cell(col,
-                                                                                                col_info,
-                                                                                                input_,
-                                                                                                cell_state,
-                                                                                                hidden_state)
+                [out, next_input, new_cell_state, new_hidden_state] = self.create_cell(col,
+                                                                                       col_info,
+                                                                                       input_,
+                                                                                       cell_state,
+                                                                                       hidden_state)
+            else:
+                new_cell_state = self.zero_cell_state
+                new_hidden_state = self.zero_hidden_state
+                out = cond_inputs[col]
+                next_input = self.input_layers[col](out)
 
             # Add the input to the list of inputs
             inputs[col] = next_input
@@ -374,9 +368,6 @@ class Generator(tf.keras.Model):
 
             # Add the hidden state to the list of hidden states
             hidden_states[col] = new_hidden_state
-
-            # Add the h_outputs to the list of h_outputs
-            lstm_outputs[col] = lstm_output
 
             # Add the list of outputs to the outputs (to be used when post-processing)
             outputs[col] = out
@@ -448,6 +439,6 @@ class Generator(tf.keras.Model):
         else:
             next_input = None
 
-        return w, next_input, lstm_output, new_cell_state, new_hidden_state
+        return w, next_input, new_cell_state, new_hidden_state
 
 

@@ -31,7 +31,7 @@ class EncodedDataset:
     Original class from TGAN.
     """
 
-    def __init__(self, data, metadata, conditional_inputs, verbose):
+    def __init__(self, data, metadata, verbose):
         """Initialize object.
 
         Parameters
@@ -40,13 +40,10 @@ class EncodedDataset:
             Original dataset
         metadata: dict
             Dictionary containing information about the data in the dataframe
-        conditional_inputs: list
-            List of variables used as conditional inputs
         verbose: int
             Level of verbose.
         """
         self.original_data = data
-        self.conditional_inputs = conditional_inputs
         self.original_columns = self.original_data.columns
         self.data = None
 
@@ -88,8 +85,7 @@ class EncodedDataset:
 
         for col in self.original_data.columns:
 
-            if col not in self.conditional_inputs:
-                self.columns.append(col)
+            self.columns.append(col)
 
             col_details = self.metadata['details'][col]
 
@@ -168,7 +164,7 @@ class EncodedDataset:
         """
         table = []
 
-        for col in self.columns:
+        for col in self.original_columns:
             column_data = data[col]
             column_metadata = self.metadata['details'][col]
 

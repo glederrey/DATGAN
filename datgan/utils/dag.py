@@ -8,9 +8,10 @@ This file contains the tools to treat the DAG used in the DATGAN.
 """
 
 import networkx as nx
+import copy
 
 
-def verify_dag(data, dag, conditional_inputs):
+def verify_dag(data, dag):
     """
     Verify the integrity of the DAG
 
@@ -20,8 +21,6 @@ def verify_dag(data, dag, conditional_inputs):
         Original dataset
     dag: networkx.DiGraph
         Directed Acyclic Graph representing the relations between the variables
-    conditional_inputs: list-
-        List of variables in the dataset that are used as inputs to the model.
 
     Raises
     ------
@@ -49,14 +48,9 @@ def verify_dag(data, dag, conditional_inputs):
             raise ValueError("Provided graph is not a DAG.")
 
     # 3. Verify that the dag has the correct number of nodes
-    if len(dag.nodes) != len(data.columns)-len(conditional_inputs):
+    if len(dag.nodes) != len(data.columns):
         raise ValueError("DAG does not have the same number of nodes ({}) as the number of "
                          "variables in the data ({}).".format(len(dag.nodes), len(data.columns)))
-
-    # 4. Check that each variable in the conditional inputs are not in the DAG
-    for c in conditional_inputs:
-        if c in dag.nodes:
-            raise ValueError("The conditional input '{}' has been found in the nodes of the DATGAN. Please, remove it!")
 
 
 def get_in_edges(dag):
@@ -134,7 +128,7 @@ def get_order_variables(dag):
     return treated, n_sources
 
 
-def linear_DAG(data):
+def linear_dag(data, conditional_inputs):
     """
     Return a linear graph for the DATGAN. Each column is connected to the next one
 
@@ -142,6 +136,8 @@ def linear_DAG(data):
     ----------
     data: pandas.DataFrame
         original data
+    conditional_inputs: list[str]
+        List of variable names used as conditional inputs
 
     Returns
     -------
@@ -151,10 +147,47 @@ def linear_DAG(data):
 
     graph = nx.DiGraph()
 
+    non_cond_vars = list(set(data.columns) - set(conditional_inputs))
+
     list_ = []
-    for i in range(len(data.columns) - 1):
-        list_.append((data.columns[i], data.columns[i + 1]))
+
+    for var in conditional_inputs:
+        list_.append((var, non_cond_vars[0]))
+
+    for i in range(len(non_cond_vars) - 1):
+        list_.append((non_cond_vars[i], non_cond_vars[i + 1]))
 
     graph.add_edges_from(list_)
 
     return graph
+
+
+def transform_dag(dag, cond_inputs):
+    """
+    If we have some conditional inputs, we want to treat these values as nodes => we need to reverse some of the links
+    in the DAG.
+
+    Parameters
+    ----------
+    dag: networkx.DiGraph
+        Original DAG provided by the user
+    cond_inputs: list[str]
+        List of node names that are treated as conditional inputs
+
+    Returns
+    -------
+    dag: networkx.DiGraph
+        Updated version of the DAG
+
+    """
+    # Reverse nodes
+    for node in cond_inputs:
+        list_ = copy.deepcopy(dag.in_edges(node))
+        for e in list_:
+            if (e[1] not in cond_inputs):
+                dag.add_edges_from([e[::-1]])
+
+        dag.remove_edges_from(list_)
+        del list_
+
+    return dag

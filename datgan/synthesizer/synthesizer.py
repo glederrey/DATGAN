@@ -179,13 +179,15 @@ class Synthesizer:
                 transformed_batch = self.transform_data(batch, synthetic=False)
 
                 # Get the conditional data
-                cond_batch = self.get_cond_batch(batch)
+                cond_batch_dict = {}
+                for c in self.conditional_inputs:
+                    cond_batch_dict[c] = batch[c]
 
                 # Reset the logs in the class for the loss function
                 self.loss.reset_logs()
 
                 # Make one step of training
-                discr_logs, gen_logs = self.train_step(transformed_batch, cond_batch, (iter_ % self.g_period == 0))
+                discr_logs, gen_logs = self.train_step(transformed_batch, cond_batch_dict, (iter_ % self.g_period == 0))
 
                 # Get the logs and temporarily save them
                 logs = {'discriminator': discr_logs, 'generator': gen_logs}
@@ -320,7 +322,7 @@ class Synthesizer:
                     self.logging = json.load(infile)
 
     @tf.function
-    def train_step(self, batch, cond_batch, train_gen):
+    def train_step(self, batch, cond_batch_dict, train_gen):
         """
         Do one step of the training process
 
@@ -328,6 +330,8 @@ class Synthesizer:
         ----------
         batch: tf.Tensor
             Tensor of the original encoded data
+        cond_batch_dict: dict
+            Dictionary of values from the conditional inputs
         train_gen: bool
             Boolean value telling the model if it should train the Generator for this step
 
@@ -340,14 +344,10 @@ class Synthesizer:
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
 
             # Only train the generator every g_period steps
-            synth = self.generator(noise, cond_batch, training=True)
+            synth = self.generator(noise, cond_batch_dict, training=True)
 
             # Transform the data
             batch_synth = self.transform_data(synth, synthetic=True)
-
-            if len(self.conditional_inputs) > 0:
-                batch = tf.concat([batch, cond_batch], axis=1)
-                batch_synth = tf.concat([batch_synth, cond_batch], axis=1)
 
             # Use the discriminator on the original and synthetic data
             orig_output = self.discriminator(batch, training=True)
@@ -467,38 +467,27 @@ class Synthesizer:
         else:
             return None
 
-    def sample(self, n_samples, cond_inputs):
+    def sample(self, cond_inputs):
         """
         Use the generator to sample data
 
         Parameters
         ----------
-        n_samples: int
-            Number of samples
+        cond_inputs: dict of tf.Tensor
+            Values of conditional inputs
 
         Returns
         -------
         samples: numpy.ndarray
             Matrix of encoded synthetic variables
         """
+        # Compute the noise
+        z = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 
-        steps = n_samples // self.batch_size + 1
-
-        samples = {}
-        for i in range(steps):
-            # Compute the noise
-            z = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
-
-            # Generate data
-            synth = self.generator(z, cond_inputs)
-
-            if i == 0:
-                samples = synth
-            else:
-                for col in self.var_order:
-                    samples[col] = tf.concat([samples[col], synth[col]], axis=0)
+        # Generate data
+        synth = self.generator(z, cond_inputs)
 
         for col in self.var_order:
-            samples[col] = samples[col].numpy()[:n_samples, :]
+            synth[col] = synth[col].numpy()
 
-        return samples
+        return synth

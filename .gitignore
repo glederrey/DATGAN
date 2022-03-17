@@ -131,6 +131,7 @@ dmypy.json
 .idea/
 test.ipynb
 example/output
+example/output_cond
 example/results
 deploy.txt
 dev.ipynb
