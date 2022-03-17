@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import tensorflow as tf
-from datgan.utils.data import MultiModalNumberTransformer
 
 
 class GANLoss(tf.keras.losses.Loss):
@@ -85,4 +84,3 @@ class GANLoss(tf.keras.losses.Loss):
         Return the logs of the loss
         """
         return self.logs[key]
-
