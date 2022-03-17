@@ -21,5 +21,8 @@ provide the same results on the assessments results.
 
 ## 2.0.1
 
-* 
 * Add a new way to define the data types to better control continuous columns
+
+## 2.1.0
+
+* Add two types of conditionality to the DATGAN (rejection sampling and conditional inputs)
