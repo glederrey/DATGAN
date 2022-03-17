@@ -338,13 +338,10 @@ rules whether to apply it or not. Therefore, it might be interesting to test thi
 - `learning_rate` It has been fixed depending on the loss function. However, as for any optimization problem, playing 
 with the learning rate to find the optimal value is always important.
 
-# Future steps & Contributing
+# Contributing
 
-We are currently working on a version of the DATGAN that will include conditionality. This repository as well as the 
-Pypi library will be updated once this is done.
-
-In the meantime, if you want to participate in the development of this model, you can write a Github issue and give us 
-your suggestions or directly prepare a Pull Request. (However, it would be better to first discuss the content of the PR.)
+If you want to participate in the development of this model, you can write a Github issue and give us your suggestions 
+or directly prepare a Pull Request. (However, it would be better to first discuss the content of the PR.)
 
 # Acknowledgements
 

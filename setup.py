@@ -45,7 +45,7 @@ setup(
     long_description_content_type='text/markdown',
     include_package_data=True,
     keywords=['DATGAN', 'GAN', 'Synthetic Tabular Data', 'Population Synthesis'],
-    name='DATGAN',
+    name='datgan',
     packages=find_packages(include=['datgan', 'datgan.*']),
     python_requires='>=3.9',
     url='https://github.com/glederrey/DATGAN',
