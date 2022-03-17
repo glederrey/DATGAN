@@ -269,7 +269,7 @@ class DATGAN:
         self.metadata = self.encoded_data.metadata
 
         if not dag:
-            self.dag = linear_dag(data)
+            self.dag = linear_dag(data, self.conditional_inputs)
         else:
             self.dag = dag
 
@@ -574,17 +574,21 @@ class DATGAN:
 
         # Reload the DAG
         if not dag:
-            self.dag = linear_dag(data)
+            self.dag = linear_dag(data, self.conditional_inputs)
         else:
             self.dag = dag
 
+        # Transform the DAG depending on the conditional inputs
+        self.dag = transform_dag(dag, self.conditional_inputs)
+
         self.var_order, self.n_sources = get_order_variables(dag)
 
-        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.conditionality,
-                                       self.z_dim, self.noise, self.learning_rate, self.g_period, self.l2_reg,
-                                       self.num_gen_rnn, self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim, self.noise,
+                                       self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
+                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
                                        self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
-                                       self.save_checkpoints, self.restore_session, self.verbose)
+                                       self.conditional_inputs, self.save_checkpoints, self.restore_session,
+                                       self.verbose)
 
         self.synthesizer.initialize()
 
