@@ -26,3 +26,8 @@ provide the same results on the assessments results.
 ## 2.1.0
 
 * Add two types of conditionality to the DATGAN (rejection sampling and conditional inputs)
+
+## 2.1.1
+
+* Add a way to enforce the bounds instead of discarding values outside of bounds. (Useful for mixed
+distributions with peak of values close to one of the bounds.)

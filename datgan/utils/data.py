@@ -95,6 +95,9 @@ class EncodedDataset:
 
                 column_data = self.original_data[col].values.reshape([-1, 1])
 
+                if ('bounds' in col_details) and ('enforce_bounds' not in col_details):
+                    self.metadata['details'][col]['enforce_bounds'] = False
+
                 # If there's a function to be applied on the data, we do it before the encoding
                 if 'apply_func' in col_details:
                     column_data = col_details['apply_func'](column_data)

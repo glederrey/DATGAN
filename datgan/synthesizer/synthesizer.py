@@ -32,6 +32,7 @@ class Synthesizer:
                  conditional_inputs, save_checkpoints, restore_session, verbose):
         """
         Constructs all the necessary attributes for the DATGANSynthesizer class.
+
         Parameters
         ----------
         output: str
@@ -130,6 +131,7 @@ class Synthesizer:
     def fit(self, encoded_data, num_epochs):
         """
         Fit the synthesizer
+
         Parameters
         ----------
         encoded_data: dict
@@ -337,6 +339,8 @@ class Synthesizer:
 
         Returns
         -------
+        dict x2:
+            Dictionary of log values for both the generator and the discriminator
 
         """
         noise = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
@@ -481,6 +485,7 @@ class Synthesizer:
         samples: numpy.ndarray
             Matrix of encoded synthetic variables
         """
+
         # Compute the noise
         z = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 

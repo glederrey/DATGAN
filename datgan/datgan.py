@@ -20,24 +20,10 @@ from datgan.utils.dag import verify_dag, get_order_variables, linear_dag, transf
 
 class DATGAN:
     """
-    Main class for DATGAN synthesizer.
-
-    Methods
-    -------
-        preprocessing:
-            Preprocess the original data
-
-        fit:
-            Fit the DATGAN model to the encoded data
-
-        sample:
-            Sample the synthetic data from the trained DATGAN model
-
-        save:
-            Save the model to load it later.
-
-        load:
-            Load the model.
+    The DATGAN is a synthesizer for tabular data. It uses LSTM cells to generate synthetic data for continuous and
+    categorical variable types. In addition, a Directed Acyclic Graph (DAG) can be provided to represent the structure
+    between the variables and help the model to perform better. This model integrates two types of conditionality:
+    rejection by sampling and conditional inputs.
 
     """
 
@@ -96,12 +82,12 @@ class DATGAN:
             Level of verbose. 0 means nothing, 1 means that some details will be printed, 2 is mostly used for
             debugging purpose.
 
-            Raises
-            ------
-            ValueError
-                If the parameter loss_function is not correctly defined.
-            ValueError
-                If the parameter label_smoothing is not correctly defined.
+        Raises
+        ------
+        ValueError
+            If the parameter loss_function is not correctly defined.
+        ValueError
+            If the parameter label_smoothing is not correctly defined.
         """
 
         self.output = output
@@ -166,7 +152,7 @@ class DATGAN:
 
     def preprocess(self, data, metadata, preprocessed_data_path=None):
         """
-        Preprocess the original data to transform it into a usable dataset.
+        Preprocess the original data to transform it into a usable dataset for the DATGAN model.
 
         Parameters
         ----------
@@ -183,9 +169,6 @@ class DATGAN:
         FileNotFoundError
             If the files 'preprocessed_data.pkl' and 'preprocessor.pkl' are not in the folder given in the variable
             preprocessed_data_path
-
-        Returns
-        -------
         """
 
         # Check that the conditional inputs corresponds to some variables in the dataset
@@ -249,7 +232,8 @@ class DATGAN:
 
     def fit(self, data, metadata=None, dag=None, preprocessed_data_path=None):
         """
-        Fit the DATGAN model to the original data and save it once it's finished training.
+        Fit the DATGAN model to the original encoded data.
+
         Parameters
         ----------
         data: pandas.DataFrame
@@ -280,7 +264,7 @@ class DATGAN:
         verify_dag(data, dag)
         self.var_order, self.n_sources = get_order_variables(dag)
 
-        self.default_parameter_values(data)
+        self.__default_parameter_values(data)
 
         # Create the folders used to save the checkpoints of the model
         if not os.path.exists(self.output):
@@ -335,6 +319,7 @@ class DATGAN:
             Type of sampling to use. Only accepts the following values: 'SS', 'SA', 'AS', and 'AA'
         timeout: bool, default True
             Use a timeout to stop sampling if the model can't generate the data asked in the conditional dict
+
         Returns
         -------
         pandas.DataFrame:
@@ -344,120 +329,62 @@ class DATGAN:
         if cond_dict is None:
             cond_dict = {}
 
+        # Set the sampling technique (simulation and/or argmax)
         self.encoded_data.set_sampling_technique(sampling)
 
-        cond_inputs = {}
-
+        # Prepare the conditional inputs if needed
         if len(self.conditional_inputs) > 0:
-            if inputs is None:
-                raise ValueError("You need to provide the conditional inputs.")
-            else:
-                # We need to transform the conditional inputs according the transformation done in the encoding process
-                for col in inputs:
-                    col_details = self.metadata['details'][col]
+            prep_inputs = self.__prepare_inputs(inputs)
+            len_inputs = len(inputs[self.conditional_inputs[0]])
+            idx_inputs = list(range(len_inputs))
+        else:
+            prep_inputs = {}
+            len_inputs = 0
+            idx_inputs = None
 
-                    if col_details['type'] == 'continuous':
-                        data = np.array(inputs[col])
+        # Test that the conditional dict for the rejection sampling is correct
+        self.__test_conditional_dict(cond_dict)
 
-                        # Apply lambda function if provided
-                        if 'apply_func' in col_details:
-                            data = col_details['apply_func'](data)
-
-                        data = data.reshape(-1, 1)
-
-                        # Transform the provided inputs using the GMM
-                        model = col_details['transform']
-                        n_modes = col_details['n']
-
-                        means = model.means_.reshape((1, n_modes))
-                        stds = np.sqrt(model.covariances_).reshape((1, n_modes))
-
-                        # Normalization
-                        normalized_values = ((data-means)/(self.encoded_data.continuous_transformer.std_span * stds))
-                        probs = model.predict_proba(data)
-
-                        # Clip the values
-                        normalized_values = np.clip(normalized_values, -.99, .99)
-
-                        cond_inputs[col] = tf.convert_to_tensor(
-                            np.concatenate([normalized_values, probs], axis=1), dtype=tf.float32)
-                    elif col_details['type'] == 'categorical':
-                        # We need to encode the labels from "str" to "int"
-                        cat_encoder = LabelEncoder()
-                        cat_encoder.classes_ = col_details['mapping']
-                        cond_inputs[col] = tf.one_hot(cat_encoder.transform(inputs[col].astype(str)),
-                                                      depth=len(col_details['mapping']))
-
-            n_cond_inputs = len(inputs[self.conditional_inputs[0]])
-            idx_cond_inputs = list(range(n_cond_inputs))
-
-        self.test_conditional_dict(cond_dict)
-
+        # Prepare some variables
         num_sampled_data = 0
-        final_samples = pd.DataFrame()
+        samples = pd.DataFrame()
         count_no_samples = 0
 
         if self.verbose > 0:
             pbar = tqdm(total=num_samples, desc="Sampling from DATGAN")
 
+        # While loop until we have enough samples
         while num_sampled_data <= num_samples:
 
             if len(self.conditional_inputs) > 0:
                 # Select randomly values in the cond_inputs dictionary
-                samp_idx = np.random.choice(idx_cond_inputs, self.batch_size, replace=(n_cond_inputs < self.batch_size))
-                samples_cond_input = {}
-                for c in cond_inputs:
-                    samples_cond_input[c] = tf.gather(cond_inputs[c], samp_idx, axis=0)
+                samp_idx = np.random.choice(idx_inputs, self.batch_size, replace=(len_inputs < self.batch_size))
+                samples_inputs = {}
+                for c in prep_inputs:
+                    samples_inputs[c] = tf.gather(prep_inputs[c], samp_idx, axis=0)
             else:
                 samp_idx = None
-                samples_cond_input = None
+                samples_inputs = None
 
             # Get samples from the synthesizer
-            encoded_samples = self.synthesizer.sample(samples_cond_input)
+            encoded_samples = self.synthesizer.sample(samples_inputs)
 
             # Decode the data
-            decoded_samples = self.encoded_data.reverse_transform(encoded_samples).copy()
+            synth_samples = self.encoded_data.reverse_transform(encoded_samples).copy()
 
-            # Replace the conditional inputs values in the decoded samples
+            # Replace the conditional inputs values in the decoded samples by the original values
             for col in self.conditional_inputs:
-                decoded_samples[col] = list(inputs[col][samp_idx])
-
-            idx_to_keep = np.ones(self.batch_size, dtype=bool)
-
-            for col in self.metadata['details'].keys():
-                col_details = self.metadata['details'][col]
-
-                if col_details['type'] == 'continuous':
-                    # Check if we need to transform in a discrete distribution
-                    if col_details['discrete']:
-                        decoded_samples[col] = np.round(decoded_samples[col])
-
-                    # Check the bounds
-                    if 'bounds' in col_details.keys():
-                        idx = (decoded_samples[col] >= col_details['bounds'][0]) & \
-                              (decoded_samples[col] <= col_details['bounds'][1])
-
-                        idx_to_keep *= np.array(idx)
-
-                if col in cond_dict.keys():
-                    if col_details['type'] == 'continuous':
-                        idx = cond_dict[col](decoded_samples[col])
-                    else:
-                        idx = np.zeros(self.batch_size, dtype=bool)
-
-                        for k in cond_dict[col]:
-                            idx += (decoded_samples[col] == k)
-
-                        # Replace values greater than 1
-                        idx[idx > 1] = 1
-
-                    idx_to_keep *= np.array(idx)
+                synth_samples[col] = list(inputs[col][samp_idx])
+            
+            # Check the valu
+            idx_to_keep = self.__review_sampled_data(synth_samples, cond_dict)
 
             # Select a subset of the samples according to the conditional dictionary
-            decoded_samples = decoded_samples[idx_to_keep]
+            synth_samples = synth_samples[idx_to_keep]
 
-            n_samp = len(decoded_samples)
+            n_samp = len(synth_samples)
 
+            # Check if we could sample some synthetic data or not
             if n_samp > 0:
                 count_no_samples = 0
             else:
@@ -468,6 +395,7 @@ class DATGAN:
                 raise TimeoutError("DATGAN was not able to provide any samples with the required copnditionals 3 "
                                    "times in a row. => Sampling is stopped.")
 
+            # Update the progress bar
             if self.verbose > 0:
                 if num_sampled_data + n_samp >= num_samples:
                     pbar.update(num_samples - num_sampled_data)
@@ -476,20 +404,175 @@ class DATGAN:
 
             num_sampled_data += n_samp
 
-            final_samples = pd.concat([final_samples, decoded_samples], ignore_index=True)
+            # Add the current samples to the final DataFrame
+            samples = pd.concat([samples, synth_samples], ignore_index=True)
 
         # Now the df is too big => we make sure it has the right size
-        final_samples = final_samples.sample(num_samples)
-        final_samples.index = range(len(final_samples))
+        samples = samples.sample(num_samples)
+        samples.index = range(len(samples))
 
         if self.verbose > 0:
             pbar.close()
 
-        return final_samples.reindex(self.encoded_data.original_columns, axis=1)
+        return samples.reindex(self.encoded_data.original_columns, axis=1)
 
-    def test_conditional_dict(self, cond_dict):
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    """                                              Load the model                                                """
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+    def load(self, data, dag=None, preprocessed_data_path=None):
         """
-        Test that the values provided in the conditional dictionary can be used to sample the DATGAN
+        Load the model based on the latest checkpoint
+
+        Parameters
+        ----------
+        data: pandas.DataFrame
+            Original dataset
+        dag: networkx.DiGraph, default None
+            Directed Acyclic Graph representing the relations between the variables. If no dag is provided, the
+            algorithm will create a linear DAG.
+        preprocessed_data_path: str, default None
+            Path to an existing preprocessor. If None is given, the model will preprocess the data and save it under
+            self.output + '/encoded_data'.
+        """
+        # Preprocess the original data
+        self.preprocess(data, None, preprocessed_data_path)
+        self.metadata = self.encoded_data.metadata
+
+        # Reload the DAG
+        if not dag:
+            self.dag = linear_dag(data, self.conditional_inputs)
+        else:
+            self.dag = dag
+
+        # Transform the DAG depending on the conditional inputs
+        self.dag = transform_dag(dag, self.conditional_inputs)
+
+        self.var_order, self.n_sources = get_order_variables(dag)
+
+        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim, self.noise,
+                                       self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
+                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
+                                       self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
+                                       self.conditional_inputs, self.save_checkpoints, self.restore_session,
+                                       self.verbose)
+
+        self.synthesizer.initialize()
+
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+    """                                              Private methods                                               """
+    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+    def __default_parameter_values(self, data):
+        """
+        Define some basic parameters based on the chosen loss function. Used in the function `fit`.
+
+        Parameters
+        ----------
+        data: pandas.DataFrame
+            Original dataset
+        """
+
+        # Define the loss function if not defined yet
+        if not self.loss_function:
+
+            nbr_cont_cols = 0
+            for col in self.metadata['details'].keys():
+                if self.metadata['details'][col]['type'] == 'continuous':
+                    nbr_cont_cols += 1
+
+            # more categorical columns than continuous
+            if float(nbr_cont_cols) / float(len(data.columns)) < 0.5:
+                self.loss_function = 'WGAN'
+            else:
+                self.loss_function = 'WGGP'
+
+        # Define the learning rate
+        if not self.learning_rate:
+            if self.loss_function == 'SGAN':
+                self.learning_rate = 1e-3
+            elif self.loss_function == 'WGAN':
+                self.learning_rate = 2e-4
+            elif self.loss_function == 'WGGP':
+                self.learning_rate = 1e-4
+
+        # Define the g_period
+        if not self.g_period:
+            if self.loss_function == 'SGAN':
+                self.g_period = 1
+            elif self.loss_function == 'WGAN':
+                self.g_period = 2
+            elif self.loss_function == 'WGGP':
+                self.g_period = 5
+
+        # Define the l2 regularization
+        if not self.l2_reg:
+            if self.loss_function == 'SGAN':
+                self.l2_reg = True
+            else:
+                self.l2_reg = False
+
+    def __prepare_inputs(self, inputs):
+        """
+        Prepare the inputs by transforming them according the preprocessed data. The encoded values will then be
+        passed to the DATGAN for sampling synthetic data.
+
+        Parameters
+        ----------
+        inputs: dict
+            Dictionary with the inputs used as conditionals
+
+        Returns
+        -------
+        prep_inputs: dict
+            Transformed values of inputs
+        """
+
+        prep_inputs = {}
+        if inputs is None:
+            raise ValueError("You need to provide the conditional inputs.")
+        else:
+            # We need to transform the inputs according the transformation done in the encoding process
+            for col in inputs:
+                col_details = self.metadata['details'][col]
+
+                if col_details['type'] == 'continuous':
+                    data = np.array(inputs[col])
+
+                    # Apply lambda function if provided
+                    if 'apply_func' in col_details:
+                        data = col_details['apply_func'](data)
+
+                    data = data.reshape(-1, 1)
+
+                    # Transform the provided inputs using the GMM
+                    model = col_details['transform']
+                    n_modes = col_details['n']
+
+                    means = model.means_.reshape((1, n_modes))
+                    stds = np.sqrt(model.covariances_).reshape((1, n_modes))
+
+                    # Normalization
+                    normalized_values = ((data-means)/(self.encoded_data.continuous_transformer.std_span * stds))
+                    probs = model.predict_proba(data)
+
+                    # Clip the values
+                    normalized_values = np.clip(normalized_values, -.99, .99)
+
+                    prep_inputs[col] = tf.convert_to_tensor(
+                        np.concatenate([normalized_values, probs], axis=1), dtype=tf.float32)
+                elif col_details['type'] == 'categorical':
+                    # We need to encode the labels from "str" to "int"
+                    cat_encoder = LabelEncoder()
+                    cat_encoder.classes_ = col_details['mapping']
+                    prep_inputs[col] = tf.one_hot(cat_encoder.transform(inputs[col].astype(str)),
+                                                  depth=len(col_details['mapping']))
+
+        return prep_inputs
+
+    def __test_conditional_dict(self, cond_dict):
+        """
+        Test that the values provided in the conditional dictionary can be used to sample the DATGAN.
 
         Parameters
         ----------
@@ -499,7 +582,6 @@ class DATGAN:
         Raises
         -------
         ValueError if the values do not correspond to what is expected.
-
         """
 
         # Test the dictionary for conditionals
@@ -548,99 +630,63 @@ class DATGAN:
                 if not isinstance(test, bool):
                     raise ValueError("The lambda function provided for the continuous variable '{}' must return a "
                                      "boolean value!".format(k))
-
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-    """                                              Load the model                                                """
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-    def load(self, data, dag=None, preprocessed_data_path=None):
+                
+    def __review_sampled_data(self, synth_samples, cond_dict):
         """
-        Load the model based on the latest checkpoint
+        Discard sampled data based on the bounds (or enforce the bounds) and/or the conditional dictionary.
+
+        => Core of the rejection sampling process.
 
         Parameters
         ----------
-        data: pandas.DataFrame
-            Original dataset
-        dag: networkx.DiGraph, default None
-            Directed Acyclic Graph representing the relations between the variables. If no dag is provided, the
-            algorithm will create a linear DAG.
-        preprocessed_data_path: str, default None
-            Path to an existing preprocessor. If None is given, the model will preprocess the data and save it under
-            self.output + '/encoded_data'.
-        """
-        # Preprocess the original data
-        self.preprocess(data, None, preprocessed_data_path)
-        self.metadata = self.encoded_data.metadata
+        synth_samples: pandas.DataFrame
+            DataFrame of the synthetic data
+        cond_dict: dict
+            Conditional dictionary
 
-        # Reload the DAG
-        if not dag:
-            self.dag = linear_dag(data, self.conditional_inputs)
-        else:
-            self.dag = dag
-
-        # Transform the DAG depending on the conditional inputs
-        self.dag = transform_dag(dag, self.conditional_inputs)
-
-        self.var_order, self.n_sources = get_order_variables(dag)
-
-        self.synthesizer = Synthesizer(self.output, self.metadata, self.dag, self.batch_size, self.z_dim, self.noise,
-                                       self.learning_rate, self.g_period, self.l2_reg, self.num_gen_rnn,
-                                       self.num_gen_hidden, self.num_dis_layers, self.num_dis_hidden,
-                                       self.label_smoothing, self.loss_function, self.var_order, self.n_sources,
-                                       self.conditional_inputs, self.save_checkpoints, self.restore_session,
-                                       self.verbose)
-
-        self.synthesizer.initialize()
-
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-    """                                              Other functions                                               """
-    """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-    def default_parameter_values(self, data):
-        """
-        Define some basic parameters based on the chosen loss function
-
-        Parameters
-        ----------
-        data: pandas.DataFrame
-            Original dataset
+        Returns
+        -------
+        idx_to_keep: list[int]
+            List of 0 and 1s used to keep or discard values in the `synth_samples` DataFrame.
         """
 
-        # Define the loss function if not defined yet
-        if not self.loss_function:
+        idx_to_keep = np.ones(self.batch_size, dtype=bool)
 
-            nbr_cont_cols = 0
-            for col in self.metadata['details'].keys():
-                if self.metadata['details'][col]['type'] == 'continuous':
-                    nbr_cont_cols += 1
+        # Go through each columns
+        for col in self.metadata['details'].keys():
+            col_details = self.metadata['details'][col]
 
-            # more categorical columns than continuous
-            if float(nbr_cont_cols) / float(len(data.columns)) < 0.5:
-                self.loss_function = 'WGAN'
-            else:
-                self.loss_function = 'WGGP'
+            if col_details['type'] == 'continuous':
+                # Check if we need to transform in a discrete distribution
+                if col_details['discrete']:
+                    synth_samples[col] = np.round(synth_samples[col])
 
-        # Define the learning rate
-        if not self.learning_rate:
-            if self.loss_function == 'SGAN':
-                self.learning_rate = 1e-3
-            elif self.loss_function == 'WGAN':
-                self.learning_rate = 2e-4
-            elif self.loss_function == 'WGGP':
-                self.learning_rate = 1e-4
+                # Check the bounds
+                if 'bounds' in col_details.keys():
+                    if col_details['enforce_bounds']:
+                        synth_samples[col] = synth_samples[col].clip(col_details['bounds'][0],
+                                                                     col_details['bounds'][1])
+                    else:
+                        idx = (synth_samples[col] >= col_details['bounds'][0]) & \
+                              (synth_samples[col] <= col_details['bounds'][1])
 
-        # Define the g_period
-        if not self.g_period:
-            if self.loss_function == 'SGAN':
-                self.g_period = 1
-            elif self.loss_function == 'WGAN':
-                self.g_period = 2
-            elif self.loss_function == 'WGGP':
-                self.g_period = 5
+                        idx_to_keep *= np.array(idx)
 
-        # Define the l2 regularization
-        if not self.l2_reg:
-            if self.loss_function == 'SGAN':
-                self.l2_reg = True
-            else:
-                self.l2_reg = False
+            # Check if the column is in the conditional dictionary
+            if col in cond_dict.keys():
+                if col_details['type'] == 'continuous':
+                    # Apply the lambda function returning boolean values
+                    idx = cond_dict[col](synth_samples[col])
+                else:
+                    idx = np.zeros(self.batch_size, dtype=bool)
+
+                    # Check if the sampled values is equal to one value in the list of the conditional dictionary
+                    for k in cond_dict[col]:
+                        idx += (synth_samples[col] == k)
+
+                    # Replace values greater than 1
+                    idx[idx > 1] = 1
+
+                idx_to_keep *= np.array(idx)
+                
+        return idx_to_keep

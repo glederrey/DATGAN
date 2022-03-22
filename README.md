@@ -18,8 +18,10 @@ rejection by sampling and conditional inputs.
 
 ## Requirements
 
-The current version (v2.1.0) of the **DATGAN** works with Python 3.9 (earlier versions have not been tested) and 
-Tensorflow 2. We, thus, recommend the user to set up a [virtualenv](https://virtualenv.pypa.io/en/latest/). 
+The current version (v2.1.1) of the **DATGAN** works with Python 3.9 and Tensorflow 2. Previous versions of Python have 
+not been tested and are thus blocked. We, thus, recommend the user to set up a 
+[virtualenv](https://virtualenv.pypa.io/en/latest/). An installation guid is provided to help with the installation of 
+the library.
 
 ## Installation
 
@@ -29,8 +31,9 @@ can use the DATGAN as intended.
 
 ## Testing the DATGAN
 
-You can clone this repository and use the notebooks provided in the folder [example](https://github.com/glederrey/DATGAN/tree/main/example) 
-to train the **DATGAN** and use the evaluation metrics provided in this repository.
+Once you have followed the installation guid, you can clone this repository and use the notebooks provided in the folder 
+[example](https://github.com/glederrey/DATGAN/tree/main/example) to train the **DATGAN** and use the evaluation metrics 
+provided in this repository.
 
 # Data Format
 
@@ -40,8 +43,9 @@ The **DATGAN** uses tabular data loaded with the `pandas` library. This table mu
 - has columns of types `int`, `float`, `str` or `bool`.
 - each column contains data of only one type. 
 
-**NOTE**: It is important to identify which columns are considered continuous and which are considered categorical. 
-For example, columns with discrete distributions have to be defined as continuous columns.
+**NOTE**: It is important to identify which columns are considered continuous and which are considered categorical. A 
+general rule of thumb is that any discrete distributions with a large number of categories should be considered 
+continuous, and then rounded. 
 
 ## Output
 The output of the **DATGAN** is a table of synthetic data with the same columns as the input table and as many rows as 
@@ -51,22 +55,26 @@ requested.
 In this short tutorial we will guide you through a series of steps that will help you to get started with the most basic 
 usage of **DATGAN** in order to generate samples from a given dataset.
 
-**NOTE**: The following examples are also covered in a [Jupyter](https://jupyter.org/) notebook,
-which you can execute by running the following commands inside your *virtualenv*:
-
-```
-pip install jupyter
-jupyter notebook example/training.ipynb
+While all the methods are explained below, you can use the helper built-in function to get a reminder of the different 
+functions that are used in this library. Just run the following lines:
+```python
+import datgan
+help(datgan)
 ```
 
 ### 1. Load the data and provide info about it
 
-The first step is to load the data wich we will use to fit the **DATGAN**. In the example, we provide a demo dataset, 
-the **CMAP** dataset. You can load it using `pandas`. We also need to provide the type of data for each columns. For the 
+The first step is to load the data which we will use to fit the **DATGAN**. In the example, we provide a demo dataset, 
+the **CMAP** dataset. It is a travel survey dataset for the city of Chicago. The dataset has already been cleaned 
+compared to the original dataset. It contains 15 columns and 8'929 rows. 
+
+You can load this dataset using `pandas`. You also need to provide the type of data for each columns. For the 
 moment, only two possibilities are implemented: `continuous` and `categorical`. For `continuous` columns, you can pass 
 more information to the model such as:
-- `bounds` [**mandatory**]: Values of the bounds. While sampling synthetic data, all values outside of the bounds will be discarded.
 - `discrete` [**mandatory**]: Boolean value to indicate if the synthetic value has to be rounded when sampling
+- `bounds` [**optional**]: Values of the bounds. While sampling synthetic data, all values outside the bounds will be discarded.
+- `enforce_bounds` [**optional**]: Instead of removing synthetic data generated outside the bounds, we will clip the values to the bounds.
+  (*This can be useful in the case of a mixed distribution with a peak of values close to the lower or the upper bound.*) 
 - `apply_func` [**optional**]: You can provide a lambda function that will be applied before the encoding step and when sampling
 the final values. This can help to train models on distributions that are more difficult to be represented by GMMs, 
 *e.g.* exponential distributions.
@@ -81,11 +89,12 @@ data_info = {
         'type': 'continuous',
         'bounds': [0.0, np.infty],
         'discrete': False,
-        'apply_func': (lambda x: np.log10(x+1e-3)),
+        'apply_func': (lambda x: np.log(x+1)),
     },
     'age': {
         'type': 'continuous',
         'bounds': [0, 100],
+        'enforce_bounds': True,
         'discrete': True
     },
     'departure_time': {
@@ -159,14 +168,14 @@ model. However, we advise you to set up the basic parameters such as the output 
 
 ```python
 output_folder = './output/'
-batch_size = 558
+batch_size = 1116
 
 from datgan import DATGAN
 
 datgan = DATGAN(output=output_folder, batch_size=batch_size, num_epochs=1000)
 ```
 
-**NOTE**: Setting up a suitable batch size is really important. A batch size too big will make the model crash due to 
+> **NOTE:** Setting up a suitable batch size is really important. A batch size too big will make the model crash due to 
 memory error while one that is too small will make the model slower to train. Trials and errors are required 
 depending on your hardware. In addition, it is good to find a batch size such that `len(df) % batch_size` is as small 
 as possible since the last batch of data is dropped if it is smaller than the batch size. 
@@ -182,6 +191,15 @@ it is possible to do it before fitting the model and saving it somewhere.
 datgan.preprocess(df, data_info, preprocessed_data_path='./encoded_data')
 ```
 
+> **NOTE 1:** If you decide to change any values in the metadata dictionary `data_info`, you will have to preprocess the 
+data again. However, since the preprocessing of the continuous variable is random, you will not be able to sample a 
+model trained on a previous preprocessed dataset with the current one. Therefore, we advise to not delete the previous 
+preprocessed dataset. 
+>
+> **NOTE 2:** In the folder `preprocessed_data_path/continuous`, you will find PNG files of the continuous distributions. 
+These pictures can be used to make sure that the Variational Gaussian Mixtures (VGM) were correctly trained for each 
+continuous distributions. It can be especially useful if the user is trying to use a lambda function.
+
 ### 5. Fit the model
 Once you have a **DATGAN** instance, you can call the method `fit` and passing the following parameters:
 - `data`: the original DataFrame
@@ -189,8 +207,12 @@ Once you have a **DATGAN** instance, you can call the method `fit` and passing t
 - `continuous_columns`: the list of continuous columns
 - `preprocessed_data_path`: the path to the preprocessed data if done in Step 4 or the path where to save them.
 ```python
-datgan.fit(df, graph, data_info, preprocessed_data_path='./encoded_data')
+datgan.fit(df, data_info, graph, preprocessed_data_path='./encoded_data')
 ```
+
+> **NOTE:** Depending on the level of verbose, the model will show different type of information. The standard level is 
+1, and it will display a progress bar for the whole training process. With level 2, the model will display 
+information at each epoch. With level 0, the model will not print any information. 
 
 ### 6. Sample new data
 Once the model has been fitted, you can generate new synthetic data by calling the function `sample`. You have to 
@@ -200,7 +222,7 @@ samples = datgan.sample(len(df))
 samples.to_csv('./data/synthetic.csv', index=False)
 ```
 
-### 7. Save and load a model
+### 7. Save and load a model (optional)
 
 In the steps above we saw that the fitting process can take a lot of time, so we probably would
 like to avoid having to fit every we want to generate samples. We advise the use to save checkpoints of the model while
@@ -215,7 +237,8 @@ required to load the model.
 new_datgan = datgan.load(df, graph, preprocessed_data_path='./encoded_data')
 ```
 
-At this point we can use this model instance to generate more samples.
+> **NOTE:** This can be replaced by using the function `fit` once again. Since the model has already been trained, it 
+will just load it. 
 
 ## Conditionality
 
