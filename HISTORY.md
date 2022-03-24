@@ -31,3 +31,7 @@ provide the same results on the assessments results.
 
 * Add a way to enforce the bounds instead of discarding values outside of bounds. (Useful for mixed
 distributions with peak of values close to one of the bounds.)
+
+## 2.1.2
+
+* Add a function to help when building the DAG.
