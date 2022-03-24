@@ -18,7 +18,8 @@ install_requires = [
     'lightgbm',
     'tqdm',
     'dill',
-    'pynverse'
+    'pynverse',
+    'scipy'
 ]
 
 setup(
@@ -49,6 +50,6 @@ setup(
     packages=find_packages(include=['datgan', 'datgan.*']),
     python_requires='>=3.9',
     url='https://github.com/glederrey/DATGAN',
-    version='2.1.1',
+    version='2.1.2',
     zip_safe=False,
 )

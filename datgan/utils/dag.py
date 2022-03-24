@@ -6,9 +6,165 @@ DAG related functionalities.
 
 This file contains the tools to treat the DAG used in the DATGAN.
 """
-
-import networkx as nx
 import copy
+import numpy as np
+import pandas as pd
+import networkx as nx
+import matplotlib.pyplot as plt
+from collections import Counter
+from itertools import combinations
+from scipy.stats import pearsonr, spearmanr
+from sklearn.preprocessing import LabelEncoder
+
+
+def advise(data, dag, plot_graphs=False):
+    """
+    Give advice about which edge could be added in the DAG based on Pearson and Spearman correlations
+
+    Parameters
+    ----------
+    data: pandas.DataFrame
+        Original dataset
+    dag: networkx.DiGraph
+        Directed Acyclic Graph representing the relations between the variables
+    plot_graphs: bool
+        Whether to plot some graphs or not
+    """
+
+    print("Preparing advice...")
+
+    # First, we transform the string values in the DF into numerical values
+    num_df = {}
+
+    cat_encoder = LabelEncoder()
+
+    for c in data.columns:
+        if data[c].dtype == 'object':
+            num_df[c] = cat_encoder.fit_transform(data[c])
+        else:
+            num_df[c] = data[c]
+
+    num_df = pd.DataFrame(num_df)
+
+    # Compute the Pearson and Spearman correlations for each combination of columns
+    cols = np.array(data.columns)
+    corr_p = np.zeros((len(cols), len(cols)))
+    corr_s = np.zeros((len(cols), len(cols)))
+
+    for x in combinations(enumerate(cols), 2):
+        i, ci = x[0]
+        j, cj = x[1]
+        val, _ = pearsonr(num_df[ci], num_df[cj])
+        # We take the absolute value since we only care about the magnitude
+        corr_p[i, j] = np.abs(val)
+        corr_p[j, i] = corr_p[i, j]
+        val, _ = spearmanr(num_df[ci], num_df[cj])
+        corr_s[i, j] = np.abs(val)
+        corr_s[j, i] = corr_s[i, j]
+
+    # Now, we check the correlation values for each of the edges that have already been added in the DAG
+    corr_p_vals = []
+    corr_s_vals = []
+
+    for e in dag.edges:
+        ci = e[0]
+        cj = e[1]
+
+        i = np.where(cols == ci)[0][0]
+        j = np.where(cols == cj)[0][0]
+
+        corr_p_vals.append(corr_p[i, j])
+
+        # Put the values to 0 to not count them later on
+        corr_p[i, j] = 0
+        corr_p[j, i] = 0
+
+        corr_s_vals.append(corr_s[i, j])
+
+        # Put the values to 0 to not count them later on
+        corr_s[i, j] = 0
+        corr_s[j, i] = 0
+
+    # Set all the correlation values to 0 in the lower triangular part of the matrices (avoid double values)
+    for i in range(len(cols)):
+        for j in range(i):
+            corr_p[i, j] = 0
+            corr_s[i, j] = 0
+
+    # Get the name of the edges in strings
+    links_p = get_link_names(corr_p_vals, corr_p, cols)
+    links_s = get_link_names(corr_s_vals, corr_s, cols)
+
+    # Check which edges have both a high pearson and a high Spearman correlation
+    final_links = list(set(links_s).intersection(set(links_p)))
+
+    print("You might want to add the following edges in your DAG (direction not given here):")
+    for link in final_links:
+        print("  - {} <-> {}".format(link[0], link[1]))
+
+    if plot_graphs:
+
+        for link in final_links:
+            a = num_df[link[0]]
+            b = num_df[link[1]]
+
+            counts = Counter([(x, y) for x, y in zip(a, b)])
+            points = set([(x, y) for x, y in zip(a, b)])
+            a = list()
+            b = list()
+            for x, y in points:
+                a.append(x)
+                b.append(y)
+
+            size = [counts[(x, y)] for x, y in zip(a, b)]
+
+            plt.figure(figsize=(10, 7))
+            plt.scatter(a, b, size, color='k')
+            plt.xlabel(link[0])
+            plt.ylabel(link[1])
+            if len(np.unique(a)) < 10:
+                plt.xticks(np.unique(a))
+            if len(np.unique(b)) < 10:
+                plt.yticks(np.unique(b))
+
+
+def get_link_names(values, matrix, names, n=10):
+    """
+    Compute a list of links with the string names
+
+    Parameters
+    ----------
+    values: list
+        Existing correlation values
+    matrix: np.ndarray
+        All the remaining correlation values
+    names: np.ndarray
+        List of string names
+    n: int
+        Maximum number of links returned
+
+    Returns
+    -------
+    links: list[str]
+        List of edges with the string name
+
+    """
+    thresh = np.quantile(values, 0.75)
+
+    values = np.sort(np.partition(np.asarray(matrix), matrix.size - n, axis=None)[-n:])
+    values = values[values >= thresh]
+
+    tmp = [np.where(matrix == v) for v in values]
+
+    links = []
+
+    for x in tmp:
+        i = x[0][0]
+        j = x[1][0]
+
+        links.append((names[i], names[j]))
+
+    return links
 
 
 def verify_dag(data, dag):

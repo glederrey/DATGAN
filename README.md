@@ -160,6 +160,23 @@ graph.add_edges_from([
 ])
 ```
 
+We also implemented a function named `advise` that computes Pearson and Spearman correlations and then suggests some 
+links that could be added to the DAG. The links suggested are the one with the highest correlations. 
+```python
+import datgan
+
+datgan.advise(df, graph, plot_graphs=True)
+```
+Results (without the graphs) should look like this:
+```
+You might want to add the following edges in your DAG (direction not given here):
+  - license <-> education_level
+  - license <-> work_status
+  - hh_vehicles <-> hh_descr
+  - hh_bikes <-> age
+  - hh_size <-> age
+```
+
 ### 3. Create a DATGAN instance
 
 The next step is to import **DATGAN** and create an instance of the model. There are no required parameters for the 
@@ -368,9 +385,9 @@ or directly prepare a Pull Request. (However, it would be better to first discus
 
 # Acknowledgements
 
-We would like to thank the authors of the **TGAN** article, Lei Xu and Kalyan Veeramachaneni, as well as all the 
-contributors of the TGAN Github repository. This model has greatly inspired the ideas behind the **DATGAN** and we have 
-used their code as a starting point to write our model. 
+We would like to thank the authors of the [**TGAN**](https://arxiv.org/abs/1811.11264) model, the authors of the 
+[**CTGAN**](https://arxiv.org/abs/1907.00503) model, and the authors of the 
+[**CTAB-GAN**](https://arxiv.org/abs/2102.08369) model. These three models have greatly inspired the **DATGAN** model.
 
 # Citation
 
