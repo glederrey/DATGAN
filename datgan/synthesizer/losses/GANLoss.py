@@ -51,7 +51,7 @@ class GANLoss(tf.keras.losses.Loss):
         """
         # KL loss
         kl_div = tf.constant(0.0)
-        ptr = tf.constant(0)
+        ptr = tf.constant(0, dtype=tf.int64)
 
         # Go through all variables
         for col in self.var_order:
@@ -60,7 +60,7 @@ class GANLoss(tf.keras.losses.Loss):
 
             if col_info['type'] == 'continuous':
                 # Skip the value. We only compute the KL on the probability vector
-                ptr += tf.constant(col_info['n'])
+                ptr += tf.constant(col_info['n'], dtype=tf.int64)
 
             pred = tf.reduce_sum(synthetic[:, ptr:ptr + col_info['n']], axis=0)
             pred = pred / tf.reduce_sum(pred)
@@ -69,7 +69,7 @@ class GANLoss(tf.keras.losses.Loss):
             real = real / tf.reduce_sum(real)
 
             kl_div += self.kl(pred, real)
-            ptr += tf.constant(col_info['n'])
+            ptr += tf.constant(col_info['n'], dtype=tf.int64)
 
         return kl_div
 
