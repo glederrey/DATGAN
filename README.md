@@ -18,7 +18,7 @@ rejection by sampling and conditional inputs.
 
 ## Requirements
 
-The current version of the **DATGAN** works with Python 3.9 and Tensorflow 2. Previous versions of Python have 
+The current version of the **DATGAN** works with Python>=3.7 and Tensorflow==2.8.0. Previous versions of Python have 
 not been tested and are thus blocked. We, thus, recommend the user to set up a 
 [virtualenv](https://virtualenv.pypa.io/en/latest/). An installation guid is provided to help with the installation of 
 the library.

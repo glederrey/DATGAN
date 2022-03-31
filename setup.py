@@ -31,7 +31,6 @@ setup(
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Natural Language :: English',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.9',
     ],
     description="Generative adversarial network with integrated expert knowledge for synthesizing tabular data",
     entry_points={
@@ -48,8 +47,8 @@ setup(
     keywords=['DATGAN', 'GAN', 'Synthetic Tabular Data', 'Population Synthesis'],
     name='datgan',
     packages=find_packages(include=['datgan', 'datgan.*']),
-    python_requires='>=3.9',
+    python_requires='>=3.7',
     url='https://github.com/glederrey/DATGAN',
-    version='2.1.2',
+    version='2.1.3',
     zip_safe=False,
 )

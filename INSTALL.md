@@ -19,7 +19,7 @@ We highly recommend creating a virtual environment to use the **DATGAN** library
 ## Setting up the virtual environment
 
 1. We can directly use conda to setup the virtual environment using the following command: (`ENV_NAME` corresponds to 
-   the name of the environment you want to give)
+   the name of the environment you want to give. The Python version has to be 3.7 or above.)
 
 ```python
 conda create -n ENV_NAME python=3.9
