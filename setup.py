@@ -49,6 +49,6 @@ setup(
     packages=find_packages(include=['datgan', 'datgan.*']),
     python_requires='>=3.7',
     url='https://github.com/glederrey/DATGAN',
-    version='2.1.3',
+    version='2.1.4',
     zip_safe=False,
 )
