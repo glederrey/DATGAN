@@ -35,3 +35,11 @@ distributions with peak of values close to one of the bounds.)
 ## 2.1.2
 
 * Add a function to help when building the DAG.
+
+## 2.1.3
+
+* Library tested on Python 3.7 => removed requirements for Python 3.9 only. Now accepts Python >=3.7
+
+## 2.1.4
+
+* Fixed issue with the computation of the KL divergence
