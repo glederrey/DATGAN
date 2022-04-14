@@ -132,8 +132,8 @@ errors to obtain a good DAG. (*We highly recommend using a "visualization" tool 
 Below, we provide an example of a DAG for the CMAP dataset. First, the picture shows a visual representation of the DAG.
 The colors of the nodes show the categories of variables: purple corresponds to individuals, blue to households, and red
 to trips. The image shows that nodes can be the source and the target of multiple edges. While the direction of the
-edges do not play an important role, we recommend having as few sink nodes as possible. The [**
-DATGAN** article](https://arxiv.org/abs/2203.03489) provides more details on building the DAG.
+edges do not play an important role, we recommend having as few sink nodes as possible. The 
+[**DATGAN** article](https://arxiv.org/abs/2203.03489) provides more details on building the DAG.
 
 ![Visualization of the DAG for the CMAP dataset](https://github.com/glederrey/DATGAN/blob/master/assets/DAG_CMAP.png?raw=true)
 
