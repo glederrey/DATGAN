@@ -43,3 +43,7 @@ distributions with peak of values close to one of the bounds.)
 ## 2.1.4
 
 * Fixed issue with the computation of the KL divergence
+
+## 2.1.5
+
+* Updated the README based on comments given by users.
