@@ -47,3 +47,10 @@ distributions with peak of values close to one of the bounds.)
 ## 2.1.5
 
 * Updated the README based on comments given by users.
+
+## 2.1.6
+
+* Add possibility to ignore some columns while assessing the results
+* Fixed an issue with the DAG when using conditional inputs
+    * It was removing the edges between variables in the conditional inputs, thus leading to worse results since 
+    some of the variables in the conditional inputs were not taken into account in the attention vectors.
