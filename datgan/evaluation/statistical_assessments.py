@@ -6,7 +6,7 @@ import pandas as pd
 from itertools import combinations
 
 
-def stats_assessment(original_data, synthetic_data, continuous_columns, aggregation_level, sep='::'):
+def stats_assessment(original_data, synthetic_data, continuous_columns, aggregation_level, sep='::', ignore_cols=[]):
     """
     Compute all the stats on the different combinations based on the aggregation_level.
 
@@ -22,6 +22,8 @@ def stats_assessment(original_data, synthetic_data, continuous_columns, aggregat
         Aggregation level for the stats. Only accepts 1, 2, or 3.
     sep: str, default '::'
         String used to separated the columns while aggregating them.
+    ignore_cols: list[str], default []
+        List of columns to ignore while computing the stats.
 
     Returns
     -------
@@ -38,8 +40,10 @@ def stats_assessment(original_data, synthetic_data, continuous_columns, aggregat
         original_data[c] = pd.cut(original_data[c], bins=bins[c])
         synthetic_data[c] = pd.cut(synthetic_data[c], bins=bins[c])
 
+    cols_to_treat = set(original_data.columns) - set(ignore_cols)
+
     # Get the combinations based on the aggregation level
-    combs = get_combinations(original_data.columns, aggregation_level, sep)
+    combs = get_combinations(cols_to_treat, aggregation_level, sep)
 
     stats = {}
     for c in combs:

@@ -8,7 +8,7 @@ from sklearn.model_selection import KFold, StratifiedKFold
 from datgan.evaluation.LightGBM import LightGBMCV, emae, emse
 
 
-def ml_assessment(df_orig, df_synth, continuous_columns, categorical_columns, params=None):
+def ml_assessment(df_orig, df_synth, continuous_columns, categorical_columns, ignore_cols=[], params=None):
     """
     Train the LightGBMCV model on all the columns of the original and the synthetic datasets.
 
@@ -24,6 +24,8 @@ def ml_assessment(df_orig, df_synth, continuous_columns, categorical_columns, pa
         List of continuous variables
     categorical_columns: list[str]
         List of categorical variables
+    ignore_cols: list[str], default []
+        List of columns to ignore
     params: dict
         Dictionary of parameters passed to the LightGBMCV model
 
@@ -36,12 +38,18 @@ def ml_assessment(df_orig, df_synth, continuous_columns, categorical_columns, pa
     if not params:
         params = {'n_estimators': 5000}
 
+    cols_to_treat = set(df_orig.columns) - set(ignore_cols)
+    df_orig = df_orig[list(cols_to_treat)]
+    df_synth = df_synth[list(cols_to_treat)]
+    continuous_columns = list(set(continuous_columns)-set(ignore_cols))
+    categorical_columns = list(set(categorical_columns)-set(ignore_cols))
+
     tmp = {}
-    for k, ycol in enumerate(df_orig.columns):
-        info = '    Column: {} ({}/{})'.format(ycol, k + 1, len(df_orig.columns))
+    for k, ycol in enumerate(cols_to_treat):
+        info = '    Column: {} ({}/{})'.format(ycol, k + 1, len(cols_to_treat))
         print(info, end="")
         sys.stdout.flush()
-        Xcols = [c for c in df_orig.columns if c != ycol]
+        Xcols = [c for c in cols_to_treat if c != ycol]
 
         y_synth = df_synth[ycol]
         X_synth = df_synth[Xcols]
@@ -79,7 +87,7 @@ def ml_assessment(df_orig, df_synth, continuous_columns, categorical_columns, pa
     return tmp
 
 
-def transform_results(results, continuous_columns, categorical_columns):
+def transform_results(results, continuous_columns, categorical_columns, ignore_cols=[]):
     """
     Transform the results of the function `ml_assessment` in human-readable format.
 
@@ -94,6 +102,8 @@ def transform_results(results, continuous_columns, categorical_columns):
         List of continuous variables
     categorical_columns: list[str]
         List of categorical variables
+    ignore_cols: list[str], default []
+        List of columns to ignore
 
     Returns
     -------
@@ -102,6 +112,9 @@ def transform_results(results, continuous_columns, categorical_columns):
         cat_sorted: list[tuple]
             Synthetic dataset sorted based on the results on categorical columns
     """
+
+    continuous_columns = list(set(continuous_columns) - set(ignore_cols))
+    categorical_columns = list(set(categorical_columns) - set(ignore_cols))
 
     ori_scores = {col: results['original'][col]['test_log_loss'] for col in categorical_columns}
     ori_scores.update({col: results['original'][col]['test_l2'] for col in continuous_columns})
