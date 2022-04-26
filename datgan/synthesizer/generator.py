@@ -105,6 +105,9 @@ class Generator(tf.keras.Model):
         self.output_layers = None
         self.input_layers = None
 
+        # Transform conditional inputs
+        self.update_cond_input_layers = None
+
         self.define_parameters()
 
     def define_parameters(self):
@@ -130,6 +133,7 @@ class Generator(tf.keras.Model):
         self.hidden_layers = {}
         self.output_layers = {}
         self.input_layers = {}
+        self.update_cond_input_layers = {}
 
         # Compute the in_edges of the dag
         in_edges = get_in_edges(self.dag)
@@ -227,9 +231,15 @@ class Generator(tf.keras.Model):
                                                       name='next_input_{}'.format(col))
 
         for col in self.conditional_inputs:
-            self.input_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                  kernel_regularizer=self.kern_reg,
-                                                  name='next_input_{}'.format(col))
+            self.update_cond_input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                              kernel_regularizer=self.kern_reg,
+                                                              name='upd_cond_input_{}'.format(col))
+
+            # If there is a successor in the graph, then we need the next input layer
+            if self.n_successors[col] > 0:
+                self.input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                      kernel_regularizer=self.kern_reg,
+                                                      name='next_input_{}'.format(col))
 
     def call(self, z, cond_inputs):
         """
@@ -258,6 +268,7 @@ class Generator(tf.keras.Model):
         cell_states = {}
         inputs = {}
         noises = {}
+        lstm_outputs = {}
 
         for i, n in enumerate(self.source_nodes):
             noises[n] = z[i]
@@ -336,7 +347,7 @@ class Generator(tf.keras.Model):
                 # Get the outputs of the ancestors in the DAG
                 ancestor_outputs = []
                 for n in ancestors:
-                    ancestor_outputs.append(inputs[n])
+                    ancestor_outputs.append(lstm_outputs[n])
 
                 # Compute the attention vector
                 if len(ancestor_outputs) == 0:
@@ -349,16 +360,21 @@ class Generator(tf.keras.Model):
                 # Concatenate the input with the attention vector and the noise
                 input_ = tf.concat([input_, noise, attention], axis=1)
 
-                [out, next_input, new_cell_state, new_hidden_state] = self.create_cell(col,
-                                                                                       col_info,
-                                                                                       input_,
-                                                                                       cell_state,
-                                                                                       hidden_state)
+                [out,
+                 next_input,
+                 new_cell_state,
+                 new_hidden_state,
+                 lstm_output] = self.create_cell(col,
+                                                 col_info,
+                                                 input_,
+                                                 cell_state,
+                                                 hidden_state)
             else:
                 new_cell_state = self.zero_cell_state
                 new_hidden_state = self.zero_hidden_state
                 out = cond_inputs[col]
                 next_input = self.input_layers[col](out)
+                lstm_output = self.update_cond_input_layers[col](out)
 
             # Add the input to the list of inputs
             inputs[col] = next_input
@@ -371,6 +387,9 @@ class Generator(tf.keras.Model):
 
             # Add the list of outputs to the outputs (to be used when post-processing)
             outputs[col] = out
+
+            # Add the LSTM output to the list of LSTM outputs
+            lstm_outputs[col] = lstm_output
 
         return outputs
 
@@ -397,12 +416,12 @@ class Generator(tf.keras.Model):
             Outputs of the current LSTM cell, i.e. encoded synthetic variable
         next_input: pytorch.Tensor
             Input for the next LSTM cell
-        lstm_output: pytorch.Tensor
-            Output of the LSTM cell
         next_cell_state: pytorch.Tensor
             Cell state for the next LSTM cell
         next_hidden_state: pytorch.Tensor
             Hidden state for the next LSTM cell
+        lstm_output: pytorch.Tensor
+            Direct output of the LSTM cell
         Raises
         ------
             ValueError: If any of the elements in self.metadata['details'] has an unsupported value in the `type` key.
@@ -412,7 +431,7 @@ class Generator(tf.keras.Model):
         # Use the LSTM cell
         lstm_output, new_hidden_state, new_cell_state = self.lstms[col](input_, initial_state=[hidden_state, cell_state])
 
-        # Pass the output through a fully connected layer to act as a convolution
+        # Pass the output through a fully connected layer to act as a convolutional layer
         hidden = self.hidden_layers[col](lstm_output)
 
         # For cont. var, we need to get the probability and the values
@@ -439,6 +458,6 @@ class Generator(tf.keras.Model):
         else:
             next_input = None
 
-        return w, next_input, new_cell_state, new_hidden_state
+        return w, next_input, new_cell_state, new_hidden_state, lstm_output
 
 

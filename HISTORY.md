@@ -54,3 +54,4 @@ distributions with peak of values close to one of the bounds.)
 * Fixed an issue with the DAG when using conditional inputs
     * It was removing the edges between variables in the conditional inputs, thus leading to worse results since 
     some of the variables in the conditional inputs were not taken into account in the attention vectors.
+* Revert to using the direct output of the LSTM cells for the attention vectors.

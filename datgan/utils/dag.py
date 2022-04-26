@@ -340,7 +340,6 @@ def transform_dag(dag, cond_inputs):
     for node in cond_inputs:
         list_ = copy.deepcopy(dag.in_edges(node))
         for e in list_:
-            print(e)
             if (e[1] not in cond_inputs):
                 dag.add_edges_from([e[::-1]])
                 dag.remove_edges_from([e])

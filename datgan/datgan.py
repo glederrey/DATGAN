@@ -260,14 +260,9 @@ class DATGAN:
         # Transform the DAG depending on the conditional inputs
         self.dag = transform_dag(self.dag, self.conditional_inputs)
 
-        print(self.dag.edges)
-        print(len(self.dag.edges))
-
         # Verify the integrity of the DAG and get the ordered list of variables for the Generator
         verify_dag(data, self.dag)
         self.var_order, self.n_sources = get_order_variables(self.dag)
-
-        asd
 
         self.__default_parameter_values(data)
 
