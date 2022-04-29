@@ -2,7 +2,7 @@
 
 __author__ = """Gael Lederrey"""
 __email__ = 'gael.lederrey@epfl.ch'
-__version__ = '2.1.6'
+__version__ = '2.1.7'
 
 from datgan.utils.dag import advise
 from datgan.datgan import DATGAN
