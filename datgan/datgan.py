@@ -301,7 +301,7 @@ class DATGAN:
     """                                                  Sampling                                                  """
     """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-    def sample(self, num_samples, inputs=None, cond_dict=None, sampling='SS', timeout=True):
+    def sample(self, num_samples, inputs=None, cond_dict=None, sampling='SS', randomize=True, timeout=True):
         """
         Create a DataFrame with the synthetic generate data. Conditionality is done through a rejection sampling
         process. For categorical variables, you need to provide the categories you want to get. For continuous
@@ -317,6 +317,8 @@ class DATGAN:
             Conditional dictionary.
         sampling: str, default 'SS'
             Type of sampling to use. Only accepts the following values: 'SS', 'SA', 'AS', and 'AA'
+        randomize: bool, default True
+            Randomize the conditional inputs if set to True. If set to False, it will not discard any samples.
         timeout: bool, default True
             Use a timeout to stop sampling if the model can't generate the data asked in the conditional dict
 
@@ -353,12 +355,28 @@ class DATGAN:
         if self.verbose > 0:
             pbar = tqdm(total=num_samples, desc="Sampling from DATGAN")
 
+        if not randomize and num_samples != len_inputs:
+            num_samples = len_inputs
+            if self.verbose > 0:
+                print("Number of samples have been adjusted to the size of the conditional inputs.")
+
+        if not randomize:
+            set_idx = set(range(len_inputs))
+
         # While loop until we have enough samples
-        while num_sampled_data <= num_samples:
+        while num_sampled_data < num_samples:
 
             if len(self.conditional_inputs) > 0:
                 # Select randomly values in the cond_inputs dictionary
-                samp_idx = np.random.choice(idx_inputs, self.batch_size, replace=(len_inputs < self.batch_size))
+                if randomize:
+                    samp_idx = np.random.choice(idx_inputs, self.batch_size, replace=(len_inputs < self.batch_size))
+                else:
+                    if len(set_idx) >= self.batch_size:
+                        samp_idx = np.random.choice(list(set_idx), self.batch_size, replace=False)
+                    else:
+                        samp_idx = np.concatenate([list(set_idx), np.zeros(self.batch_size - len(set_idx))])
+                        samp_idx = samp_idx.astype(int)
+
                 samples_inputs = {}
                 for c in prep_inputs:
                     samples_inputs[c] = tf.gather(prep_inputs[c], samp_idx, axis=0)
@@ -376,11 +394,22 @@ class DATGAN:
             for col in self.conditional_inputs:
                 synth_samples[col] = list(inputs[col][samp_idx])
             
-            # Check the valu
+            # Check the values of the samples
             idx_to_keep = self.__review_sampled_data(synth_samples, cond_dict)
+
+            # Remove all the excess samples
+            if not randomize:
+                if len(set_idx) < self.batch_size:
+                    idx_to_keep[len(set_idx):] = False
 
             # Select a subset of the samples according to the conditional dictionary
             synth_samples = synth_samples[idx_to_keep]
+
+            # Update the set of index to be sampled
+            if not randomize:
+                idx_kept = samp_idx[idx_to_keep]
+                synth_samples['index'] = idx_kept
+                set_idx = set_idx - set(idx_kept)
 
             n_samp = len(synth_samples)
 
@@ -407,8 +436,12 @@ class DATGAN:
             # Add the current samples to the final DataFrame
             samples = pd.concat([samples, synth_samples], ignore_index=True)
 
-        # Now the df is too big => we make sure it has the right size
-        samples = samples.sample(num_samples)
+        if randomize:
+            # Now the df is too big => we make sure it has the right size
+            samples = samples.sample(num_samples)
+        else:
+            samples = samples.sort_values('index')
+
         samples.index = range(len(samples))
 
         if self.verbose > 0:

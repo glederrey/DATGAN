@@ -59,3 +59,7 @@ distributions with peak of values close to one of the bounds.)
 ## 2.1.7
 
 * Fixed an issue when transforming the DAG according to the conditional inputs.
+
+## 2.1.8
+
+* Added the option to sample data from the DATGAN without randomizing the conditional inputs.
