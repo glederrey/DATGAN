@@ -63,3 +63,9 @@ distributions with peak of values close to one of the bounds.)
 ## 2.1.8
 
 * Added the option to sample data from the DATGAN without randomizing the conditional inputs.
+
+## 2.1.9
+
+* Changed noise to take into account the number of categories in the categorical columns.
+* Added noise to categorical conditional inputs.
+* Removed the direct ancestors from the attention vector.

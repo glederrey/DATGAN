@@ -177,19 +177,23 @@ class Synthesizer:
 
             for batch in iterable_steps:
 
-                # Transformed the data in a tensor
-                transformed_batch = self.transform_data(batch, synthetic=False)
-
                 # Get the conditional data
                 cond_batch_dict = {}
                 for c in self.conditional_inputs:
-                    cond_batch_dict[c] = batch[c]
+                    col_info = self.metadata['details'][c]
+                    if col_info['type'] == 'categorical':
+                        # Add some uniform noise to the categorical data
+                        noise = tf.random.uniform(batch[c].shape, minval=0, maxval=self.noise/col_info['n'])
+                        cat_cond_data = (batch[c] + noise)
+                        cond_batch_dict[c] =  cat_cond_data/tf.reduce_sum(cat_cond_data, keepdims=True, axis=1)
+                    else:
+                        cond_batch_dict[c] = batch[c]
 
                 # Reset the logs in the class for the loss function
                 self.loss.reset_logs()
 
                 # Make one step of training
-                discr_logs, gen_logs = self.train_step(transformed_batch, cond_batch_dict, (iter_ % self.g_period == 0))
+                discr_logs, gen_logs = self.train_step(batch, cond_batch_dict, (iter_ % self.g_period == 0))
 
                 # Get the logs and temporarily save them
                 logs = {'discriminator': discr_logs, 'generator': gen_logs}
@@ -330,8 +334,8 @@ class Synthesizer:
 
         Parameters
         ----------
-        batch: tf.Tensor
-            Tensor of the original encoded data
+        batch: dict
+            Dictionary of the original encoded data
         cond_batch_dict: dict
             Dictionary of values from the conditional inputs
         train_gen: bool
@@ -345,6 +349,9 @@ class Synthesizer:
         """
         noise = tf.random.normal([self.n_sources, self.batch_size, self.z_dim])
 
+        # Transformed the data in a tensor
+        batch_orig = self.transform_data(batch, synthetic=True)
+
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
 
             # Only train the generator every g_period steps
@@ -354,7 +361,7 @@ class Synthesizer:
             batch_synth = self.transform_data(synth, synthetic=True)
 
             # Use the discriminator on the original and synthetic data
-            orig_output = self.discriminator(batch, training=True)
+            orig_output = self.discriminator(batch_orig, training=True)
             synth_output = self.discriminator(batch_synth, training=True)
 
             # Compute the loss function for the discriminator
@@ -366,7 +373,7 @@ class Synthesizer:
 
                 # Compute interpolated values
                 alpha = tf.random.uniform(shape=[self.batch_size, 1], minval=0., maxval=1.)
-                batch_interp = alpha * batch + (tf.ones_like(alpha) - alpha) * batch_synth
+                batch_interp = alpha * batch_orig + (tf.ones_like(alpha) - alpha) * batch_synth
 
                 with tf.GradientTape() as gp_tape:
                     gp_tape.watch(batch_interp)
@@ -381,7 +388,7 @@ class Synthesizer:
             # If we need to train the generator, compute its loss function...
             if train_gen:
                 gen_loss = self.loss.gen_loss(synth_output,
-                                              batch,
+                                              batch_orig,
                                               batch_synth,
                                               tf.reduce_sum(self.generator.losses))
 
@@ -430,10 +437,11 @@ class Synthesizer:
                 val = dict_[col]
 
                 # Label smoothing
-                if (synthetic and self.label_smoothing == 'TS') or \
-                        ((not synthetic) and self.label_smoothing in ['TS', 'OS']):
-                    noise = tf.random.uniform(val.shape, minval=0, maxval=self.noise)
-                    val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
+                if col not in self.conditional_inputs:
+                    if (synthetic and self.label_smoothing == 'TS') or \
+                            ((not synthetic) and self.label_smoothing in ['TS', 'OS']):
+                        noise = tf.random.uniform(val.shape, minval=0, maxval=self.noise / col_info['n'])
+                        val = (val + noise) / tf.reduce_sum(val + noise, keepdims=True, axis=1)
 
                 data.append(val)
 

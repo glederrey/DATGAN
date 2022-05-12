@@ -30,7 +30,7 @@ class DATGAN:
     def __init__(self, loss_function=None, label_smoothing='TS', output='output', gpu=None, num_epochs=100,
                  batch_size=500, save_checkpoints=True, restore_session=True, learning_rate=None, g_period=None,
                  l2_reg=None, z_dim=200, num_gen_rnn=100, num_gen_hidden=50, num_dis_layers=1, num_dis_hidden=100,
-                 noise=0.2, conditional_inputs=None, verbose=1):
+                 noise=0.5, conditional_inputs=None, verbose=1):
         """
         Constructs all the necessary attributes for the DATGAN class.
 
@@ -393,7 +393,7 @@ class DATGAN:
             # Replace the conditional inputs values in the decoded samples by the original values
             for col in self.conditional_inputs:
                 synth_samples[col] = list(inputs[col][samp_idx])
-            
+
             # Check the values of the samples
             idx_to_keep = self.__review_sampled_data(synth_samples, cond_dict)
 
@@ -586,7 +586,7 @@ class DATGAN:
                     stds = np.sqrt(model.covariances_).reshape((1, n_modes))
 
                     # Normalization
-                    normalized_values = ((data-means)/(self.encoded_data.continuous_transformer.std_span * stds))
+                    normalized_values = ((data - means) / (self.encoded_data.continuous_transformer.std_span * stds))
                     probs = model.predict_proba(data)
 
                     # Clip the values
@@ -663,7 +663,7 @@ class DATGAN:
                 if not isinstance(test, bool):
                     raise ValueError("The lambda function provided for the continuous variable '{}' must return a "
                                      "boolean value!".format(k))
-                
+
     def __review_sampled_data(self, synth_samples, cond_dict):
         """
         Discard sampled data based on the bounds (or enforce the bounds) and/or the conditional dictionary.
@@ -721,5 +721,5 @@ class DATGAN:
                     idx[idx > 1] = 1
 
                 idx_to_keep *= np.array(idx)
-                
+
         return idx_to_keep

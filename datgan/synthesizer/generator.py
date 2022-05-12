@@ -69,8 +69,17 @@ class Generator(tf.keras.Model):
         # Stuff done with networkx
         self.in_edges = get_in_edges(self.dag)
         self.ancestors = {}
+        self.predecessors = {}
         self.n_successors = {}
         for col in self.var_order:
+            # Get the predecessors of the current variable-
+            pred = set()
+            for node in self.dag.predecessors(col):
+                pred.add(node)
+
+            self.predecessors[col] = pred
+
+            # Ancestors consist in all the ancestors minus the predecessors (they are taken into account in the input)
             self.ancestors[col] = nx.ancestors(self.dag, col)
             self.n_successors[col] = len(list(self.dag.successors(col)))
 
@@ -105,9 +114,6 @@ class Generator(tf.keras.Model):
         self.output_layers = None
         self.input_layers = None
 
-        # Transform conditional inputs
-        self.update_cond_input_layers = None
-
         self.define_parameters()
 
     def define_parameters(self):
@@ -133,7 +139,6 @@ class Generator(tf.keras.Model):
         self.hidden_layers = {}
         self.output_layers = {}
         self.input_layers = {}
-        self.update_cond_input_layers = {}
 
         # Compute the in_edges of the dag
         in_edges = get_in_edges(self.dag)
@@ -148,98 +153,97 @@ class Generator(tf.keras.Model):
             if v not in self.conditional_inputs:
                 vars_without_cond_inputs.append(v)
 
-        for col in vars_without_cond_inputs:
-            # We need one lstm cell per variable
-            self.lstms[col] = layers.LSTM(self.num_gen_rnn,
-                                          return_state=True,
-                                          time_major=True,
-                                          kernel_regularizer=self.kern_reg,
-                                          name='LSTM_{}'.format(col))
+        for col in self.var_order:
 
-            # Get the ancestors of the current variable in the DAG
-            ancestors = self.ancestors[col]
+            if col not in self.conditional_inputs:
+                # We need one lstm cell per variable
+                self.lstms[col] = layers.LSTM(self.num_gen_rnn,
+                                              return_state=True,
+                                              time_major=True,
+                                              kernel_regularizer=self.kern_reg,
+                                              name='LSTM_{}'.format(col))
 
-            # Get info
-            col_info = self.metadata['details'][col]
+                # Get the ancestors of the current variable in the DAG
+                ancestors = self.ancestors[col]
+                predecessors = self.predecessors[col]
 
-            # For the input tensor, cell state, and hidden state:
+                # Get info
+                col_info = self.metadata['details'][col]
 
-            if len(in_edges[col]) == 0:
-                self.zero_inputs[col] = tf.Variable(tf.zeros([1, self.num_gen_rnn]), name='input_{}'.format(col))
-            # If the current variable has more than 1 ancestors, we need Linear layers that will be used after
-            # concatenating the different inputs, cell states, and hidden states.
-            if len(in_edges[col]) > 1:
-                self.miLSTM_inputs_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                              kernel_regularizer=self.kern_reg,
-                                                              name='multi_input_{}'.format(col))
-                self.miLSTM_cell_states_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                                   kernel_regularizer=self.kern_reg,
-                                                                   name='multi_cell_states_{}'.format(col))
-                self.miLSTM_hidden_states_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                                     kernel_regularizer=self.kern_reg,
-                                                                     name='multi_hidden_states_{}'.format(col))
+                # For the input tensor, cell state, and hidden state:
 
-            # Compute the noise in function of the number of ancestors
-            src_nodes = set(ancestors).intersection(set(self.source_nodes))
-            src_nodes = list(src_nodes)
+                if len(in_edges[col]) == 0:
+                    self.zero_inputs[col] = tf.Variable(tf.zeros([1, self.num_gen_rnn]), name='input_{}'.format(col))
+                # If the current variable has more than 1 ancestors, we need Linear layers that will be used after
+                # concatenating the different inputs, cell states, and hidden states.
+                if len(in_edges[col]) > 1:
+                    self.miLSTM_inputs_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                                  kernel_regularizer=self.kern_reg,
+                                                                  name='multi_input_{}'.format(col))
+                    self.miLSTM_cell_states_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                                       kernel_regularizer=self.kern_reg,
+                                                                       name='multi_cell_states_{}'.format(col))
+                    self.miLSTM_hidden_states_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                                         kernel_regularizer=self.kern_reg,
+                                                                         name='multi_hidden_states_{}'.format(col))
 
-            # If a variable has multiple source nodes in their ancestors, we need to concatenate these noises and pass
-            # them through a Linear layer.
-            if len(src_nodes) > 1:
-                src_nodes.sort()
-                str_ = '-'.join(src_nodes)
+                # Compute the noise in function of the number of ancestors
+                src_nodes = set(ancestors).intersection(set(self.source_nodes))
+                src_nodes = list(src_nodes)
 
-                if str_ not in existing_noises:
-                    self.noise_layers[str_] = layers.Dense(self.z_dim,
-                                                           kernel_regularizer=self.kern_reg,
-                                                           name='noise_{}'.format(str_))
+                # If a variable has multiple source nodes in their ancestors, we need to concatenate these noises and pass
+                # them through a Linear layer.
+                if len(src_nodes) > 1:
+                    src_nodes.sort()
+                    str_ = '-'.join(src_nodes)
 
-                    existing_noises.append(str_)
+                    if str_ not in existing_noises:
+                        self.noise_layers[str_] = layers.Dense(self.z_dim,
+                                                               kernel_regularizer=self.kern_reg,
+                                                               name='noise_{}'.format(str_))
 
-            # For the attention vector, we have two cases. If there are no ancestors, the attention vector is just
-            # initialized as a zero vector.
-            if len(ancestors) > 0:
-                # If the current variable has at least one ancestor, we are learning the alpha vector instead.
-                self.zero_alphas[col] = tf.Variable(tf.zeros([len(ancestors), 1, 1]), name="alpha_{}".format(col))
+                        existing_noises.append(str_)
 
-            # For the cell itself, we have to define multiple layers depending on the type of variables
-            self.hidden_layers[col] = layers.Dense(self.num_gen_hidden,
-                                                   kernel_regularizer=self.kern_reg,
-                                                   name='hidden_layer_{}'.format(col))
+                # For the attention vector, we have two cases. If there are no ancestors, the attention vector is just
+                # initialized as a zero vector.
+                if len(ancestors - predecessors) > 0:
+                    # If the current variable has at least one ancestor, we are learning the alpha vector instead.
+                    self.zero_alphas[col] = tf.Variable(tf.zeros([len(ancestors - predecessors), 1, 1]), name="alpha_{}".format(col))
 
-            if col_info['type'] == 'continuous':
-                self.output_layers[col + '_val'] = layers.Dense(col_info['n'],
-                                                                activation='tanh',
-                                                                kernel_regularizer=self.kern_reg,
-                                                                name='output_cont_val_{}'.format(col))
-
-                self.output_layers[col + '_prob'] = layers.Dense(col_info['n'],
-                                                                 activation='softmax',
-                                                                 kernel_regularizer=self.kern_reg,
-                                                                 name='output_cont_prob_{}'.format(col))
-
-            elif col_info['type'] == 'categorical':
-                self.output_layers[col] = layers.Dense(col_info['n'],
-                                                       activation='softmax',
+                # For the cell itself, we have to define multiple layers depending on the type of variables
+                self.hidden_layers[col] = layers.Dense(self.num_gen_hidden,
                                                        kernel_regularizer=self.kern_reg,
-                                                       name='output_cat_{}'.format(col))
+                                                       name='hidden_layer_{}'.format(col))
 
-            # If there is a successor in the graph, then we need the next input layer
-            if self.n_successors[col] > 0:
-                self.input_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                      kernel_regularizer=self.kern_reg,
-                                                      name='next_input_{}'.format(col))
+                if col_info['type'] == 'continuous':
+                    self.output_layers[col + '_val'] = layers.Dense(col_info['n'],
+                                                                    activation='tanh',
+                                                                    kernel_regularizer=self.kern_reg,
+                                                                    name='output_cont_val_{}'.format(col))
 
-        for col in self.conditional_inputs:
-            self.update_cond_input_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                              kernel_regularizer=self.kern_reg,
-                                                              name='upd_cond_input_{}'.format(col))
+                    self.output_layers[col + '_prob'] = layers.Dense(col_info['n'],
+                                                                     activation='softmax',
+                                                                     kernel_regularizer=self.kern_reg,
+                                                                     name='output_cont_prob_{}'.format(col))
 
-            # If there is a successor in the graph, then we need the next input layer
-            if self.n_successors[col] > 0:
-                self.input_layers[col] = layers.Dense(self.num_gen_rnn,
-                                                      kernel_regularizer=self.kern_reg,
-                                                      name='next_input_{}'.format(col))
+                elif col_info['type'] == 'categorical':
+                    self.output_layers[col] = layers.Dense(col_info['n'],
+                                                           activation='softmax',
+                                                           kernel_regularizer=self.kern_reg,
+                                                           name='output_cat_{}'.format(col))
+
+                # If there is a successor in the graph, then we need the next input layer
+                if self.n_successors[col] > 0:
+                    self.input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                          kernel_regularizer=self.kern_reg,
+                                                          name='next_input_{}'.format(col))
+
+            else:
+                # If there is a successor in the graph, then we need the next input layer
+                if self.n_successors[col] > 0:
+                    self.input_layers[col] = layers.Dense(self.num_gen_rnn,
+                                                          kernel_regularizer=self.kern_reg,
+                                                          name='next_input_{}'.format(col))
 
     def call(self, z, cond_inputs):
         """
@@ -278,6 +282,7 @@ class Generator(tf.keras.Model):
             if col not in self.conditional_inputs:
                 # Get the ancestors of the current variable in the DAG
                 ancestors = self.ancestors[col]
+                predecessors = self.predecessors[col]
 
                 # Get info
                 col_info = self.metadata['details'][col]
@@ -344,10 +349,10 @@ class Generator(tf.keras.Model):
                         noise = self.noise_layers[str_](tf.concat(tmp_noises, axis=1))
                         noises[str_] = noise
 
-                # Get the outputs of the ancestors in the DAG
+                # Get the outputs of the ancestors in the DAG for the attention vector
                 ancestor_outputs = []
-                for n in ancestors:
-                    ancestor_outputs.append(lstm_outputs[n])
+                for n in (ancestors-predecessors):
+                    ancestor_outputs.append(inputs[n])
 
                 # Compute the attention vector
                 if len(ancestor_outputs) == 0:
@@ -363,18 +368,16 @@ class Generator(tf.keras.Model):
                 [out,
                  next_input,
                  new_cell_state,
-                 new_hidden_state,
-                 lstm_output] = self.create_cell(col,
-                                                 col_info,
-                                                 input_,
-                                                 cell_state,
-                                                 hidden_state)
+                 new_hidden_state] = self.create_cell(col,
+                                                      col_info,
+                                                      input_,
+                                                      cell_state,
+                                                      hidden_state)
             else:
                 new_cell_state = self.zero_cell_state
                 new_hidden_state = self.zero_hidden_state
                 out = cond_inputs[col]
                 next_input = self.input_layers[col](out)
-                lstm_output = self.update_cond_input_layers[col](out)
 
             # Add the input to the list of inputs
             inputs[col] = next_input
@@ -387,9 +390,6 @@ class Generator(tf.keras.Model):
 
             # Add the list of outputs to the outputs (to be used when post-processing)
             outputs[col] = out
-
-            # Add the LSTM output to the list of LSTM outputs
-            lstm_outputs[col] = lstm_output
 
         return outputs
 
@@ -420,8 +420,6 @@ class Generator(tf.keras.Model):
             Cell state for the next LSTM cell
         next_hidden_state: pytorch.Tensor
             Hidden state for the next LSTM cell
-        lstm_output: pytorch.Tensor
-            Direct output of the LSTM cell
         Raises
         ------
             ValueError: If any of the elements in self.metadata['details'] has an unsupported value in the `type` key.
@@ -458,6 +456,6 @@ class Generator(tf.keras.Model):
         else:
             next_input = None
 
-        return w, next_input, new_cell_state, new_hidden_state, lstm_output
+        return w, next_input, new_cell_state, new_hidden_state
 
 
