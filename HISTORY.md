@@ -69,3 +69,7 @@ distributions with peak of values close to one of the bounds.)
 * Changed noise to take into account the number of categories in the categorical columns.
 * Added noise to categorical conditional inputs.
 * Removed the direct ancestors from the attention vector.
+
+## 2.1.10
+
+* Rewrote the mini batch discriminator to allow for larger batch sizes.

@@ -39,8 +39,8 @@ class Discriminator(keras.Model):
         self.l2_reg = l2_reg
 
         # Batch diversity parameters
-        self.n_kernel = 10
-        self.kernel_dim = 10
+        self.n_kernels = 5
+        self.kernel_dim = 3
 
         # Regularizer
         if self.l2_reg:
@@ -49,6 +49,7 @@ class Discriminator(keras.Model):
             self.kern_reg = None
 
         self.list_layers = None
+        self.batch_tensor = None
         self.build_layers()
 
     def build_layers(self):
@@ -69,7 +70,7 @@ class Discriminator(keras.Model):
                                          kernel_regularizer=self.kern_reg)]
 
             # Add the layer for the batch_diversity
-            internal.append(layers.Dense(self.n_kernel*self.kernel_dim,
+            internal.append(layers.Dense(self.n_kernels*self.kernel_dim,
                                          kernel_regularizer=self.kern_reg))
 
             # No need to use the scale parameters for the normalization since the results will be passed to the Dropout
@@ -134,14 +135,14 @@ class Discriminator(keras.Model):
         # Pass through the output layer
         return self.list_layers[-1](x)
 
-    def batch_diversity(self, M):
+    def batch_diversity(self, input_tensor):
         """
         Return the minibatch discrimination vector as defined by Salimans et al., 2016.
 
 
         Parameters
         ----------
-        M: tf.keras.layers.Dense
+        input_tensor: tf.keras.layers.Dense
             Input layer
 
         Returns
@@ -150,9 +151,38 @@ class Discriminator(keras.Model):
             batch diversity tensor
 
         """
-        M = tf.reshape(M, [-1, self.n_kernel, self.kernel_dim])
-        M1 = tf.reshape(M, [-1, 1, self.n_kernel, self.kernel_dim])
-        M2 = tf.reshape(M, [1, -1, self.n_kernel, self.kernel_dim])
+        activation = tf.reshape(input_tensor, (-1, self.n_kernels, self.kernel_dim))
+
+        # Calculate the L1 and then the sum of the negative exponential
+        diffs = tf.expand_dims(activation, 3) - tf.expand_dims(tf.transpose(activation, [1, 2, 0]), 0)
+        abs_diffs = tf.reduce_sum(tf.abs(diffs), 2)
+        minibatch_features = tf.reduce_sum(tf.exp(-abs_diffs), 2)
+
+        return minibatch_features
+
+    def mini_batch_discriminator(self, features, num_features, kernels, kernerl_dim):
+        """
+        Return the minibatch discrimination vector as defined by Salimans et al., 2016.
+
+        Parameters
+        ----------
+        features: tf.keras.layers.Dense
+            Input layer
+        num_features: int
+            Number of features
+        kernels: int
+            Number of kernels
+        kernerl_dim: int
+            Dimension of the kernel
+
+        Returns
+        -------
+        tensorflow.Tensor:
+            batch diversity tensor
+        """
+        features = tf.reshape(features, [-1, num_features])
+        M1 = tf.reshape(features, [-1, 1, num_features])
+        M2 = tf.reshape(features, [1, -1, num_features])
         diff = tf.exp(-tf.reduce_sum(tf.abs(M1 - M2), axis=3))
         return tf.reduce_sum(diff, axis=0)
 
