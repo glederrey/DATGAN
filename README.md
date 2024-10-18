@@ -10,6 +10,8 @@ Directed Acyclic Tabular GAN (**DATGAN**) for integrating expert knowledge in sy
 - Development Status: [Alpha](https://pypi.org/search/?q=&o=&c=Development+Status+%3A%3A+3+-+Alpha)
 - Homepage: https://github.com/glederrey/DATGAN
 
+> NOTE: As I've finished my PhD and I left academia, I'm not planning to maintain, nor improve this model. However, if you have questions, feel free to ask in the Issues. 
+
 ## Overview
 
 The **DATGAN** is a synthesizer for tabular data. It uses LSTM cells to generate synthetic data for continuous and
