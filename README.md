@@ -373,9 +373,10 @@ two main functions.
 | Name          |             Type             | Default | Explanation                                                                                                                            |
 |:--------------|:----------------------------:|:-------:|:---------------------------------------------------------------------------------------------------------------------------------------|
 | `num_samples` |            `int`             |         | Number of rows in the generated synthetic dataset.                                                                                     |
-| `inputs`      | `dict` or `pandas.DataFrame` | `None`  | Optional input data. **Must** be provided if the model was training with some conditional inputs in the variable `conditional_inputs`. |                              |         |                                                                                           |
+| `inputs`      | `dict` or `pandas.DataFrame` | `None`  | Optional input data. **Must** be provided if the model was training with some conditional inputs in the variable `conditional_inputs`. |
 | `cond_dict`   |            `dict`            | `None`  | Dictionary for the rejection sampling conditionality.                                                                                  |
 | `sampling`    |            `str`             |  `SS`   | Sampling strategy. Only accepts the following values: `'SS'`, `'SA'`, `'AS'`, and `'AA'`.                                              |
+| `randomize`   |            `bool`            | `True`  | Randomize the conditional inputs if set to True. If set to False, it will not discard any samples.                                     |
 | `timeout`     |            `bool`            | `True`  | Timeout to stop sampling if the model cannot generated the required data in `cond_dict`.                                               |
 
 When sampling the synthetic data, you can choose between multiple sampling strategies. `S` means we are using simulation
